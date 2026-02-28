@@ -1,0 +1,26 @@
+{
+  "name": "wundwx",
+  "version": "1.0.0",
+  "description": "Weather Underground weather data server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "weather",
+    "weather-underground",
+    "wx",
+    "wunderground"
+  ],
+  "author": "H22Designs",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
