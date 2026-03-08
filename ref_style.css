@@ -1,0 +1,497 @@
+/* =====================================================================
+   Weather Station Dashboard — Custom Styles
+   ===================================================================== */
+
+:root {
+  --bg-deep:      #0b1120;
+  --bg-card:      #111827;
+  --bg-card-alt:  #1a2436;
+  --border:       #1e3050;
+  --accent:       #3b82f6;
+  --accent-glow:  rgba(59,130,246,.15);
+  --text-primary: #f0f6ff;
+  --text-muted:   #7a90ae;
+  --text-dim:     #4a607a;
+  --green:        #22c55e;
+  --yellow:       #eab308;
+  --orange:       #f97316;
+  --red:          #ef4444;
+  --purple:       #a855f7;
+  --teal:         #14b8a6;
+  --font-mono:    "JetBrains Mono", "Fira Code", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────── */
+.wx-header {
+  background: linear-gradient(180deg, #040c1a 0%, #0b1120 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 0 1.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 20px rgba(0,0,0,.5);
+}
+
+.wx-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1400px;
+  margin: 0 auto;
+  height: 60px;
+  gap: 1rem;
+}
+
+.wx-logo {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: -.01em;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.wx-logo-icon {
+  width: 32px; height: 32px;
+  background: var(--accent);
+  border-radius: 8px;
+  display: grid; place-items: center;
+  font-size: 1.1rem;
+}
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  background: rgba(34,197,94,.12);
+  border: 1px solid rgba(34,197,94,.3);
+  color: var(--green);
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: .2rem .55rem;
+  border-radius: 4px;
+}
+
+.live-dot {
+  width: 7px; height: 7px;
+  background: var(--green);
+  border-radius: 50%;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: .4; transform: scale(.7); }
+}
+
+.last-update {
+  font-size: .75rem;
+  color: var(--text-muted);
+}
+
+.last-update span { color: var(--text-primary); }
+
+/* ─── Layout ──────────────────────────────────────────────────────────── */
+.wx-main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ─── Hero row ────────────────────────────────────────────────────────── */
+.hero-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 1rem;
+}
+
+.hero-temp {
+  grid-column: span 2;
+  background: linear-gradient(135deg, #0f2044 0%, #111827 60%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.5rem 2rem;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.temp-big {
+  font-size: 5.5rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -.04em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.temp-unit { font-size: 2rem; font-weight: 400; color: var(--text-muted); vertical-align: top; margin-top: .6rem; display: inline-block; }
+
+.temp-meta { display: flex; flex-direction: column; gap: .6rem; flex: 1; }
+
+.temp-meta-row {
+  display: flex; align-items: center; gap: .5rem;
+  font-size: .85rem; color: var(--text-muted);
+}
+.temp-meta-row strong { color: var(--text-primary); font-size: 1rem; }
+
+.condition-icon {
+  font-size: 4rem;
+  line-height: 1;
+  filter: drop-shadow(0 0 12px rgba(255,200,50,.3));
+}
+
+/* ─── Metric Card ─────────────────────────────────────────────────────── */
+.metric-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+  transition: border-color .2s;
+}
+
+.metric-card:hover { border-color: rgba(59,130,246,.4); }
+
+.metric-header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.metric-label {
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.metric-icon { font-size: 1.1rem; opacity: .7; }
+
+.metric-value {
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+
+.metric-unit {
+  font-size: .9rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: .2rem;
+}
+
+.metric-sub {
+  font-size: .78rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  padding-top: .6rem;
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+
+.metric-sub-row { display: flex; justify-content: space-between; }
+.metric-sub-row span:last-child { color: var(--text-primary); }
+
+/* ─── Wind Compass ────────────────────────────────────────────────────── */
+.compass-wrap {
+  display: flex; align-items: center; justify-content: center; gap: 1.5rem;
+}
+
+.compass {
+  position: relative;
+  width: 90px; height: 90px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: radial-gradient(circle, #1a2436 0%, #0b1120 100%);
+  flex-shrink: 0;
+}
+
+.compass-tick {
+  position: absolute;
+  width: 2px; height: 8px;
+  background: var(--text-dim);
+  left: calc(50% - 1px);
+  top: 4px;
+  transform-origin: center 41px;
+}
+
+.compass-label {
+  position: absolute;
+  font-size: .55rem;
+  font-weight: 700;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+  transform: translate(-50%, -50%);
+}
+
+.compass-n { top: 12px;  left: 50%; }
+.compass-e { top: 50%;  right: 8px; left: auto; transform: translate(50%, -50%); }
+.compass-s { bottom: 8px; top: auto; left: 50%; transform: translate(-50%, 50%); }
+.compass-w { top: 50%;  left: 8px; transform: translate(-50%, -50%); }
+
+.compass-needle {
+  position: absolute;
+  width: 0; height: 0;
+  top: 50%; left: 50%;
+  transform-origin: 0 0;
+}
+
+.needle-north {
+  width: 3px; height: 34px;
+  background: linear-gradient(to bottom, #ef4444, #991b1b);
+  border-radius: 2px 2px 0 0;
+  margin-left: -1.5px;
+  margin-top: -34px;
+  position: absolute;
+}
+
+.needle-south {
+  width: 3px; height: 28px;
+  background: var(--text-dim);
+  border-radius: 0 0 2px 2px;
+  margin-left: -1.5px;
+  position: absolute;
+}
+
+.compass-center {
+  position: absolute;
+  width: 8px; height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.wind-stats { display: flex; flex-direction: column; gap: .3rem; }
+.wind-stat { font-size: .8rem; color: var(--text-muted); }
+.wind-stat strong { color: var(--text-primary); font-size: .95rem; }
+
+/* ─── Gauge Bar ───────────────────────────────────────────────────────── */
+.gauge-bar-wrap { position: relative; }
+
+.gauge-bar-track {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.gauge-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width .6s ease;
+  background: linear-gradient(90deg, var(--accent), #60a5fa);
+}
+
+.gauge-labels {
+  display: flex; justify-content: space-between;
+  font-size: .65rem; color: var(--text-dim);
+  margin-top: .3rem;
+}
+
+/* ─── UV Index Color ─────────────────────────────────────────────────── */
+.uv-low    { color: var(--green); }
+.uv-mod    { color: var(--yellow); }
+.uv-high   { color: var(--orange); }
+.uv-vhigh  { color: var(--red); }
+.uv-ext    { color: var(--purple); }
+
+/* ─── Baro trend ──────────────────────────────────────────────────────── */
+.trend-rising  { color: var(--green); }
+.trend-falling { color: var(--red); }
+.trend-steady  { color: var(--text-muted); }
+
+/* ─── Metrics grid ────────────────────────────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+/* ─── Charts section ──────────────────────────────────────────────────── */
+.charts-header {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: .5rem;
+}
+
+.charts-header h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -.01em;
+}
+
+.time-filter {
+  display: flex; gap: .25rem;
+}
+
+.tf-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: .72rem;
+  font-weight: 600;
+  padding: .3rem .65rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.tf-btn:hover { border-color: var(--accent); color: var(--accent); }
+.tf-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.chart-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.25rem;
+}
+
+.chart-card.wide { grid-column: span 2; }
+
+.chart-title {
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.chart-wrap { position: relative; height: 200px; }
+
+/* ─── History Table ───────────────────────────────────────────────────── */
+.history-section h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+.table-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow-x: auto;
+}
+
+.wx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .78rem;
+}
+
+.wx-table th {
+  background: var(--bg-card-alt);
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: .68rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  padding: .75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.wx-table td {
+  padding: .65rem 1rem;
+  border-bottom: 1px solid rgba(30,48,80,.5);
+  color: var(--text-primary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.wx-table tr:last-child td { border-bottom: none; }
+.wx-table tbody tr:hover td { background: rgba(59,130,246,.05); }
+
+/* ─── Footer ──────────────────────────────────────────────────────────── */
+.wx-footer {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: .72rem;
+  padding: 2rem 1.5rem;
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+}
+
+/* ─── No Data State ───────────────────────────────────────────────────── */
+.no-data {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 1rem;
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+.no-data-icon { font-size: 4rem; opacity: .3; }
+.no-data h2 { font-size: 1.25rem; color: var(--text-muted); }
+.no-data p  { font-size: .85rem; color: var(--text-dim); max-width: 480px; }
+
+.endpoint-list {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.5rem;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  color: var(--text-muted);
+}
+
+.endpoint-list li { margin: .3rem 0; list-style: none; }
+.endpoint-list span { color: var(--accent); }
+
+/* ─── Utilities ───────────────────────────────────────────────────────── */
+.text-green  { color: var(--green); }
+.text-yellow { color: var(--yellow); }
+.text-orange { color: var(--orange); }
+.text-red    { color: var(--red); }
+.text-accent { color: var(--accent); }
+.text-muted  { color: var(--text-muted); }
+
+/* ─── Responsive ──────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .hero-row      { grid-template-columns: 1fr 1fr; }
+  .hero-temp     { grid-column: span 2; }
+  .metrics-grid  { grid-template-columns: repeat(2, 1fr); }
+  .charts-grid   { grid-template-columns: 1fr; }
+  .chart-card.wide { grid-column: span 1; }
+}
+
+@media (max-width: 640px) {
+  .wx-main       { padding: 1rem; }
+  .hero-row      { grid-template-columns: 1fr; }
+  .hero-temp     { grid-column: span 1; }
+  .metrics-grid  { grid-template-columns: 1fr 1fr; }
+  .temp-big      { font-size: 4rem; }
+  .wx-header-inner { flex-wrap: wrap; height: auto; padding: .6rem 0; }
+}
