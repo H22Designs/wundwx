@@ -8,6 +8,8 @@ from database import SessionLocal, WeatherRecord
 API_KEY = "5a1ddae9b97240469ddae9b9720046f8"
 STATIONS = ["KALMILLP10", "KALKENNE5", "KALMILLP8"]
 POLL_INTERVAL_SECONDS = 30
+INTEGRITY_SLOT_MINUTES = 10  # expected observation interval (minutes)
+INTEGRITY_DAYS = 5            # number of past days to verify
 
 def fetch_current_weather(station_id):
     url = f"https://api.weather.com/v2/pws/observations/current?stationId={station_id}&format=json&units=e&apiKey={API_KEY}"
@@ -90,6 +92,7 @@ def save_weather_record(db: Session, record_data: dict):
     return existing
 
 def backfill():
+    """Legacy backfill: only runs when no recent data exists. Prefer repair_integrity()."""
     db = SessionLocal()
     try:
         for station_id in STATIONS:
@@ -115,8 +118,122 @@ def backfill():
     finally:
         db.close()
 
+
+def _round_to_slot(ts):
+    """Floor a datetime to the nearest INTEGRITY_SLOT_MINUTES boundary.
+
+    Naive datetimes are treated as UTC (matching how the rest of the codebase
+    stores timestamps).
+    """
+    slot_secs = INTEGRITY_SLOT_MINUTES * 60
+    # Coerce timezone-aware datetimes to naive UTC before arithmetic
+    if ts.tzinfo is not None:
+        ts = ts.replace(tzinfo=None) - ts.utcoffset()
+    epoch_secs = int((ts - datetime.datetime(1970, 1, 1)).total_seconds())
+    floored = (epoch_secs // slot_secs) * slot_secs
+    return datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=floored)
+
+
+def check_integrity(days=INTEGRITY_DAYS):
+    """
+    Scan the database for each station over the last ``days`` days.
+
+    A station-day is flagged for repair when:
+      * More than 10% of the expected 10-minute slots have no matching record, OR
+      * Any record in that day has both temperature AND humidity as NULL
+        (corrupt / placeholder row).
+
+    Returns a dict  { station_id: set_of_date_strings_YYYYMMDD }.
+    """
+    db = SessionLocal()
+    needs_repair = {}
+    try:
+        now = datetime.datetime.utcnow()
+        for station_id in STATIONS:
+            bad_dates = set()
+            for i in range(days):
+                day = (now - datetime.timedelta(days=i)).date()
+                day_start = datetime.datetime(day.year, day.month, day.day, 0, 0, 0)
+                day_end = day_start + datetime.timedelta(days=1)
+
+                records = db.query(WeatherRecord).filter(
+                    WeatherRecord.station_id == station_id,
+                    WeatherRecord.timestamp >= day_start,
+                    WeatherRecord.timestamp < day_end,
+                ).order_by(WeatherRecord.timestamp).all()
+
+                # --- detect corrupt rows ---
+                has_corrupt = any(
+                    r.temperature is None and r.humidity is None
+                    for r in records
+                )
+
+                # --- detect missing 10-minute slots ---
+                # Build the full set of expected slot boundaries up to 'now'
+                expected = set()
+                slot_cursor = day_start
+                slot_delta = datetime.timedelta(minutes=INTEGRITY_SLOT_MINUTES)
+                while slot_cursor < day_end and slot_cursor <= now:
+                    expected.add(slot_cursor)
+                    slot_cursor += slot_delta
+
+                filled = {_round_to_slot(r.timestamp) for r in records if r.timestamp}
+                missing_slots = expected - filled
+                missing_pct = len(missing_slots) / len(expected) if expected else 0
+
+                if has_corrupt or missing_pct > 0.10:
+                    date_str = day.strftime("%Y%m%d")
+                    bad_dates.add(date_str)
+                    print(
+                        f"  [{station_id}] {day}: "
+                        f"{len(missing_slots)}/{len(expected)} slots missing "
+                        f"({'corrupt records found' if has_corrupt else 'data gap'})"
+                    )
+
+            if bad_dates:
+                needs_repair[station_id] = bad_dates
+    finally:
+        db.close()
+    return needs_repair
+
+
+def repair_integrity(days=INTEGRITY_DAYS):
+    """
+    Scan the database for missing or corrupt 10-minute-interval data over the
+    last ``days`` days and repair any gaps by fetching from Weather Underground.
+    Called automatically at application startup.
+    """
+    print(f"Scanning database integrity for the last {days} days (10-minute intervals per station)...")
+    needs_repair = check_integrity(days)
+
+    if not needs_repair:
+        print("Integrity check passed — no repair needed.")
+        return
+
+    total = sum(len(v) for v in needs_repair.values())
+    print(f"Repairing {total} station-day(s) with missing or corrupt data...")
+
+    db = SessionLocal()
+    try:
+        for station_id, date_set in needs_repair.items():
+            for date_str in sorted(date_set):
+                print(f"  Fetching {station_id} {date_str} from Weather Underground...")
+                records = fetch_historical_weather(station_id, date_str)
+                saved = 0
+                for rec in records:
+                    result = save_weather_record(db, rec)
+                    if result:
+                        saved += 1
+                print(f"  {station_id} {date_str}: {len(records)} observations fetched, "
+                      f"{saved} new records saved.")
+                time.sleep(1)
+    finally:
+        db.close()
+
+    print("Integrity repair complete.")
+
 def poll_loop():
-    backfill()
+    repair_integrity()
     print("Starting background polling loop...")
     db = SessionLocal()
     try:
