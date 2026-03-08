@@ -2,12 +2,14 @@ import os
 import time
 import requests
 import datetime
+from collections import defaultdict
 from sqlalchemy.orm import Session
 from database import SessionLocal, WeatherRecord
 
 API_KEY = "5a1ddae9b97240469ddae9b9720046f8"
 STATIONS = ["KALMILLP10", "KALKENNE5", "KALMILLP8"]
 POLL_INTERVAL_SECONDS = 30
+INTEGRITY_SLOT_MINUTES = 30  # expected observation interval
 
 def fetch_current_weather(station_id):
     url = f"https://api.weather.com/v2/pws/observations/current?stationId={station_id}&format=json&units=e&apiKey={API_KEY}"
@@ -115,8 +117,134 @@ def backfill():
     finally:
         db.close()
 
+def _round_to_slot(ts):
+    """Floor a datetime to the nearest INTEGRITY_SLOT_MINUTES boundary."""
+    slot_min = (ts.minute // INTEGRITY_SLOT_MINUTES) * INTEGRITY_SLOT_MINUTES
+    return ts.replace(minute=slot_min, second=0, microsecond=0)
+
+
+def check_integrity(days=5):
+    """
+    Scan the database for the last *days* days and return a per-station report of:
+      - corrupt_count  : records where temperature IS NULL
+      - missing_slots  : list of ISO-format slot timestamps with no coverage
+      - missing_dates  : unique dates (YYYYMMDD) that contain missing slots
+
+    Does NOT modify the database.
+    """
+    db = SessionLocal()
+    try:
+        now = datetime.datetime.utcnow()
+        cutoff = now - datetime.timedelta(days=days)
+        report = {}
+
+        for station_id in STATIONS:
+            # ── Corrupt records ──────────────────────────────────────────
+            corrupt_count = db.query(WeatherRecord).filter(
+                WeatherRecord.station_id == station_id,
+                WeatherRecord.timestamp >= cutoff,
+                WeatherRecord.temperature == None,
+            ).count()
+
+            # ── Missing 30-min slots ─────────────────────────────────────
+            rows = db.query(WeatherRecord.timestamp).filter(
+                WeatherRecord.station_id == station_id,
+                WeatherRecord.timestamp >= cutoff,
+                WeatherRecord.temperature != None,
+            ).all()
+
+            # Build a set of covered slot boundaries
+            covered = set(_round_to_slot(r.timestamp) for r in rows)
+
+            # Walk every expected slot from cutoff to now
+            slot = _round_to_slot(cutoff)
+            missing = []
+            while slot < now:
+                if slot not in covered:
+                    missing.append(slot)
+                slot += datetime.timedelta(minutes=INTEGRITY_SLOT_MINUTES)
+
+            report[station_id] = {
+                "corrupt_count": corrupt_count,
+                "missing_slot_count": len(missing),
+                "missing_slots": [s.strftime("%Y-%m-%dT%H:%MZ") for s in missing],
+                "missing_dates": sorted(set(s.strftime("%Y%m%d") for s in missing)),
+            }
+
+        return report
+    finally:
+        db.close()
+
+
+def repair_integrity(days=5):
+    """
+    1. Remove corrupt records (temperature IS NULL) for the last *days* days.
+    2. Backfill every date that has at least one missing 30-min slot.
+
+    Returns a per-station summary dict.
+    """
+    db = SessionLocal()
+    try:
+        now = datetime.datetime.utcnow()
+        cutoff = now - datetime.timedelta(days=days)
+        summary = {}
+
+        for station_id in STATIONS:
+            station_summary = {
+                "corrupt_removed": 0,
+                "dates_backfilled": [],
+            }
+
+            # ── Step 1: Delete corrupt records ───────────────────────────
+            corrupt = db.query(WeatherRecord).filter(
+                WeatherRecord.station_id == station_id,
+                WeatherRecord.timestamp >= cutoff,
+                WeatherRecord.temperature == None,
+            ).all()
+            if corrupt:
+                print(f"[integrity] {station_id}: removing {len(corrupt)} corrupt record(s)...")
+                for rec in corrupt:
+                    db.delete(rec)
+                db.commit()
+                station_summary["corrupt_removed"] = len(corrupt)
+
+            # ── Step 2: Find missing 30-min slots ────────────────────────
+            rows = db.query(WeatherRecord.timestamp).filter(
+                WeatherRecord.station_id == station_id,
+                WeatherRecord.timestamp >= cutoff,
+                WeatherRecord.temperature != None,
+            ).all()
+            covered = set(_round_to_slot(r.timestamp) for r in rows)
+
+            slot = _round_to_slot(cutoff)
+            missing_dates = set()
+            while slot < now:
+                if slot not in covered:
+                    missing_dates.add(slot.strftime("%Y%m%d"))
+                slot += datetime.timedelta(minutes=INTEGRITY_SLOT_MINUTES)
+
+            if not missing_dates:
+                print(f"[integrity] {station_id}: no missing slots found.")
+            else:
+                print(f"[integrity] {station_id}: backfilling {len(missing_dates)} date(s): "
+                      f"{sorted(missing_dates)}")
+                for date_str in sorted(missing_dates):
+                    print(f"[integrity] {station_id}: fetching history for {date_str}...")
+                    records = fetch_historical_weather(station_id, date_str)
+                    for rec in records:
+                        save_weather_record(db, rec)
+                    station_summary["dates_backfilled"].append(date_str)
+                    time.sleep(1)
+
+            summary[station_id] = station_summary
+
+        return summary
+    finally:
+        db.close()
+
+
 def poll_loop():
-    backfill()
+    repair_integrity()
     print("Starting background polling loop...")
     db = SessionLocal()
     try:

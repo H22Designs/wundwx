@@ -2,7 +2,7 @@ import os
 import threading
 import datetime
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -234,6 +234,31 @@ def get_nearby_stations(station: str = DEFAULT_STATION):
         return unique[:20]
     except Exception:
         return []
+
+# ── Database Integrity ────────────────────────────────────────────────────────
+@app.get("/api/integrity")
+def get_integrity_report():
+    """
+    Scan the database and return a per-station integrity report showing:
+    - corrupt_count      : records with a NULL temperature in the last 5 days
+    - missing_slot_count : 30-minute windows with no observation in the last 5 days
+    - missing_slots      : list of those slot timestamps (ISO format)
+    - missing_dates      : unique dates that contain missing slots
+    """
+    return poller.check_integrity(days=5)
+
+
+@app.post("/api/integrity/repair")
+def trigger_integrity_repair(background_tasks: BackgroundTasks):
+    """
+    Kick off a background repair job that:
+    1. Removes corrupt records (NULL temperature) from the last 5 days.
+    2. Backfills any day that has at least one missing 30-minute slot.
+    Returns immediately; check server logs for progress.
+    """
+    background_tasks.add_task(poller.repair_integrity, 5)
+    return {"status": "repair started", "message": "Integrity repair running in the background."}
+
 
 # ── Static files ─────────────────────────────────────────────────────────────
 os.makedirs("static/css", exist_ok=True)
