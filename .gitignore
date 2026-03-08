@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+weather.db
+.vscode/
+.idea/
+*.log
+static/js/*.map

@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KALMILLP10 — Weather Underground Live</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌦️</text></svg>" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    /* WU accent overrides — deep orange brand colour */
+    :root {
+      --accent:      #f97316;
+      --accent-glow: rgba(249,115,22,.15);
+    }
+    .wu-badge {
+      display: inline-flex; align-items: center; gap: .4rem;
+      background: rgba(249,115,22,.12);
+      border: 1px solid rgba(249,115,22,.35);
+      color: #f97316;
+      font-size: .68rem; font-weight: 700;
+      letter-spacing: .07em; text-transform: uppercase;
+      padding: .2rem .6rem; border-radius: 4px;
+    }
+    .wu-logo { font-size: 1rem; }
+  </style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══════════════════════════════════════════════════════════════ -->
+<header class="wx-header">
+  <div class="wx-header-inner">
+    <a href="/" class="wx-logo">
+      <div class="wx-logo-icon">🌦️</div>
+      <span>KALMILLP10</span>
+    </a>
+
+    <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+      <span class="wu-badge">
+        <span class="wu-logo">⛅</span> Weather Underground
+      </span>
+      <span class="live-badge">
+        <span class="live-dot"></span> LIVE
+      </span>
+      <span class="last-update">
+        Observed: <span id="last-update-time">—</span>
+      </span>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ MAIN ══════════════════════════════════════════════════════════════════ -->
+<main class="wx-main">
+
+  <!-- ── NO API KEY / NO DATA ────────────────────────────────────────────── -->
+  
+
+  <div id="no-data-state" class="no-data" style="display:none">
+    <div class="no-data-icon">📡</div>
+    <h2>Fetching data for KALMILLP10…</h2>
+    <p>Backfill and first live observation in progress. Refresh in a moment.</p>
+  </div>
+
+  <div id="dashboard-state" >
+
+    <!-- ── Hero Row ─────────────────────────────────────────────────────── -->
+    <div class="hero-row">
+
+      <!-- Temperature hero -->
+      <div class="hero-temp">
+        <div>
+          <div id="cond-icon" class="condition-icon">
+            
+              
+              
+              
+              🌧️
+              
+            
+          </div>
+        </div>
+        <div>
+          <div style="display:flex; align-items:flex-start; gap:.1rem; line-height:1;">
+            <span id="temp-val" class="temp-big">
+              58
+            </span>
+            <span class="temp-unit">°F</span>
+          </div>
+          <div style="margin-top:.3rem; font-size:.8rem; color:var(--text-muted);">
+            Outdoor Temperature
+          </div>
+        </div>
+        <div class="temp-meta">
+          <div class="temp-meta-row">
+            <span>Feels Like</span>
+            <strong id="feels-like">
+              
+                
+                58°F
+              
+            </strong>
+          </div>
+          <div class="temp-meta-row">
+            <span>Dew Point</span>
+            <strong id="dew-point">
+              57°F
+            </strong>
+          </div>
+          <div class="temp-meta-row">
+            <span>Humidity</span>
+            <strong id="humidity-val">
+              96%
+            </strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Today summary -->
+      <div class="metric-card" style="justify-content:center;">
+        <div class="metric-label">Today's Summary</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:.75rem 1.5rem; margin-top:.25rem;">
+          <div>
+            <div style="font-size:.65rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.07em;">High</div>
+            <div style="font-size:1.3rem; font-weight:700; color:#ef4444;" id="today-high">
+              62.0°F
+            </div>
+          </div>
+          <div>
+            <div style="font-size:.65rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.07em;">Low</div>
+            <div style="font-size:1.3rem; font-weight:700; color:#60a5fa;" id="today-low">
+              58.0°F
+            </div>
+          </div>
+          <div>
+            <div style="font-size:.65rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.07em;">Rain</div>
+            <div style="font-size:1.1rem; font-weight:600;" id="today-rain">
+              0.66&#34;
+            </div>
+          </div>
+          <div>
+            <div style="font-size:.65rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.07em;">UV Max</div>
+            <div style="font-size:1.1rem; font-weight:600;" id="today-uv">
+              —
+            </div>
+          </div>
+          <div>
+            <div style="font-size:.65rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.07em;">Peak Gust</div>
+            <div style="font-size:1.1rem; font-weight:600;" id="today-gust">
+              13.0 mph
+            </div>
+          </div>
+          <div>
+            <div style="font-size:.65rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.07em;">Solar Peak</div>
+            <div style="font-size:1.1rem; font-weight:600;" id="today-solar">
+              —
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /hero-row -->
+
+    <!-- ── Metrics Grid ──────────────────────────────────────────────────── -->
+    <div class="metrics-grid">
+
+      <!-- Wind -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Wind</span>
+          <span class="metric-icon">💨</span>
+        </div>
+        <div class="compass-wrap">
+          <div class="compass">
+            <span class="compass-label compass-n">N</span>
+            <span class="compass-label compass-e">E</span>
+            <span class="compass-label compass-s">S</span>
+            <span class="compass-label compass-w">W</span>
+            <div id="compass-needle-el" style="position:absolute;top:50%;left:50%;
+              transform-origin:50% 50%;transform:rotate(182deg);">
+              <div class="needle-north"></div>
+              <div class="needle-south"></div>
+            </div>
+            <div class="compass-center"></div>
+          </div>
+          <div class="wind-stats">
+            <div class="wind-stat">Speed: <strong><span id="wind-speed">3.0</span> mph</strong></div>
+            <div class="wind-stat">Gust:  <strong><span id="wind-gust">5.0</span> mph</strong></div>
+            <div class="wind-stat">From:  <strong><span id="wind-dir-txt">—</span></strong></div>
+            <div class="wind-stat" style="color:var(--text-dim);">
+              <span id="wind-dir-deg">182°</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Humidity -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Humidity</span>
+          <span class="metric-icon">💧</span>
+        </div>
+        <span id="hum-val2" class="metric-value text-accent">
+          96%
+        </span>
+        <div class="gauge-bar-wrap" style="margin-top:.5rem;">
+          <div class="gauge-bar-track">
+            <div id="hum-bar" class="gauge-bar-fill"
+                 style="width:96.0%;
+                        background:linear-gradient(90deg,#f97316,#22c55e);">
+            </div>
+          </div>
+          <div class="gauge-labels"><span>0%</span><span>50%</span><span>100%</span></div>
+        </div>
+      </div>
+
+      <!-- Pressure -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Barometric Pressure</span>
+          <span class="metric-icon">🌡️</span>
+        </div>
+        <div style="display:flex; align-items:baseline; gap:.4rem;">
+          <span id="baro-val" class="metric-value text-green">
+            29.41
+          </span>
+          <span class="metric-unit">inHg</span>
+          <span id="baro-trend" class="trend-steady" style="font-size:1.4rem; margin-left:.3rem;">→</span>
+        </div>
+        <div class="metric-sub">
+          <div class="metric-sub-row">
+            <span>Normal</span>
+            <span style="color:var(--text-dim);">29.92 inHg</span>
+          </div>
+          <div class="metric-sub-row">
+            <span>Deviation</span>
+            <span>
+              
+                
+                <span class="text-red">
+                  -0.51 inHg
+                </span>
+              
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rain -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Precipitation</span>
+          <span class="metric-icon">🌧️</span>
+        </div>
+        <div style="display:flex; align-items:baseline; gap:.3rem;">
+          <span id="rain-daily" class="metric-value text-accent">
+            0.01
+          </span>
+          <span class="metric-unit">in today</span>
+        </div>
+        <div class="metric-sub">
+          <div class="metric-sub-row">
+            <span>Rain Rate</span>
+            <span><span id="rain-rate">0.00</span> in/hr</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- UV Index -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">UV Index</span>
+          <span class="metric-icon">☀️</span>
+        </div>
+        <div>
+          <span id="uv-val" class="metric-value
+            text-muted">
+            —
+          </span>
+        </div>
+        <div id="uv-label" style="font-size:.8rem; color:var(--text-muted); margin-top:.25rem;">
+          
+        </div>
+        <div style="margin-top:.5rem;">
+          <div style="display:flex; gap:4px;">
+            
+            <div style="flex:1; height:5px; background:#22c55e; border-radius:2px;"></div>
+            
+            <div style="flex:1; height:5px; background:#a3e635; border-radius:2px;"></div>
+            
+            <div style="flex:1; height:5px; background:#eab308; border-radius:2px;"></div>
+            
+            <div style="flex:1; height:5px; background:#ef4444; border-radius:2px;"></div>
+            
+            <div style="flex:1; height:5px; background:#a855f7; border-radius:2px;"></div>
+            
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:.6rem; color:var(--text-dim); margin-top:.2rem;">
+            <span>0</span><span>3</span><span>6</span><span>8</span><span>11+</span>
+          </div>
+        </div>
+        <div class="metric-sub">
+          <div class="metric-sub-row">
+            <span>Solar Radiation</span>
+            <span><span id="solar-val">—</span> W/m²</span>
+          </div>
+          <div class="gauge-bar-wrap" style="margin-top:.3rem;">
+            <div class="gauge-bar-track">
+              <div id="solar-bar" class="gauge-bar-fill"
+                   style="width:0%;
+                          background:linear-gradient(90deg,#eab308,#f97316);">
+              </div>
+            </div>
+            <div class="gauge-labels"><span>0</span><span>600</span><span>1200 W/m²</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Station Info -->
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Station Info</span>
+          <span class="metric-icon">📡</span>
+        </div>
+        <div style="font-size:1.4rem; font-weight:700; color:var(--accent); letter-spacing:.02em;">
+          KALMILLP10
+        </div>
+        <div class="metric-sub">
+          <div class="metric-sub-row">
+            <span>Source</span>
+            <span style="color:var(--text-primary);">Weather Underground</span>
+          </div>
+          <div class="metric-sub-row">
+            <span>Data Type</span>
+            <span>Current</span>
+          </div>
+          <div class="metric-sub-row">
+            <span>Obs. Time (UTC)</span>
+            <span style="font-size:.72rem;">2026-02-27 06:16</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /metrics-grid -->
+
+    <!-- ── Charts ────────────────────────────────────────────────────────── -->
+    <section>
+      <div class="charts-header">
+        <h2>Historical Trends</h2>
+        <div class="time-filter">
+          <button class="tf-btn active" data-hours="6">6h</button>
+          <button class="tf-btn" data-hours="24">24h</button>
+          <button class="tf-btn" data-hours="48">48h</button>
+          <button class="tf-btn" data-hours="168">7d</button>
+        </div>
+      </div>
+
+      <div class="charts-grid" style="margin-top:1rem;">
+        <div class="chart-card wide">
+          <div class="chart-title">Temperature, Dew Point &amp; Heat Index</div>
+          <div class="chart-wrap"><canvas id="chart-temp"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Relative Humidity</div>
+          <div class="chart-wrap"><canvas id="chart-hum"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Barometric Pressure</div>
+          <div class="chart-wrap"><canvas id="chart-baro"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Wind Speed &amp; Gusts</div>
+          <div class="chart-wrap"><canvas id="chart-wind"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Precipitation Rate</div>
+          <div class="chart-wrap"><canvas id="chart-rain"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">UV Index</div>
+          <div class="chart-wrap"><canvas id="chart-uv"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Daily History Table ───────────────────────────────────────────── -->
+    <section class="history-section">
+      <h2>Daily Summary — Last 30 Days</h2>
+      <div class="table-wrap">
+        <table class="wx-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>High Temp</th>
+              <th>Low Temp</th>
+              <th>Avg Temp</th>
+              <th>Humidity H</th>
+              <th>Humidity L</th>
+              <th>Avg Pressure</th>
+              <th>Peak Gust</th>
+              <th>Rainfall</th>
+              <th>UV Max</th>
+              <th>Readings</th>
+            </tr>
+          </thead>
+          <tbody id="daily-tbody">
+            
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div><!-- /dashboard-state -->
+  
+
+</main>
+
+<!-- ═══ FOOTER ════════════════════════════════════════════════════════════════ -->
+<footer class="wx-footer">
+  <div>
+    Station <strong>KALMILLP10</strong> &nbsp;·&nbsp;
+    Data sourced from <strong>Weather Underground</strong> &nbsp;·&nbsp;
+    Refreshes every 60 s
+  </div>
+  <div style="margin-top:.4rem;">
+    <a href="/api/current" style="color:var(--text-dim); text-decoration:none; margin:0 .5rem;">JSON API</a>
+    &middot;
+    <a href="/api/history" style="color:var(--text-dim); text-decoration:none; margin:0 .5rem;">History</a>
+    &middot;
+    <a href="/api/daily"   style="color:var(--text-dim); text-decoration:none; margin:0 .5rem;">Daily Summary</a>
+    &middot;
+    <a href="/api/status"  style="color:var(--text-dim); text-decoration:none; margin:0 .5rem;">Status</a>
+  </div>
+</footer>
+
+<script src="/static/js/wu_dashboard.js"></script>
+</body>
+</html>
