@@ -287,6 +287,23 @@ body {
     outline: none;
 }
 
+.setting-input {
+    width: 100%;
+    padding: .4rem .6rem;
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 6px;
+    font-size: .78rem;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+
+.setting-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
 /* ─── Layout ──────────────────────────────────────────────────────────── */
 .wx-main {
     max-width: 1400px;

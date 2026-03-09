@@ -14,6 +14,7 @@ let customEnd = null;
 let refreshMs = 30000;
 let useCelsius = false;
 let refreshTimer = null;
+const stationMeta = {};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -182,6 +183,7 @@ async function initStationTabs() {
         if (!container) return;
         container.innerHTML = "";
         stations.forEach(s => {
+            stationMeta[s.id] = { cwop_callsign: s.cwop_callsign || "" };
             const btn = document.createElement("button");
             btn.className = "station-tab" + (s.id === currentStation ? " active" : "");
             btn.textContent = s.id;
@@ -191,14 +193,22 @@ async function initStationTabs() {
                 container.querySelectorAll(".station-tab").forEach(b => b.classList.remove("active"));
                 btn.classList.add("active");
                 setText("header-station-name", s.name || s.id);
+                setText("cwop-link-station-label", s.id);
+                const inp = $("cwop-callsign-input");
+                if (inp) inp.value = stationMeta[s.id]?.cwop_callsign || "";
                 saveSettings();
                 fetchAll();
             });
             container.appendChild(btn);
         });
-        // Set header name for current station
+        // Set header name and CWOP input for current station
         const cur = stations.find(s => s.id === currentStation);
-        if (cur) setText("header-station-name", cur.name || cur.id);
+        if (cur) {
+            setText("header-station-name", cur.name || cur.id);
+            setText("cwop-link-station-label", cur.id);
+            const inp = $("cwop-callsign-input");
+            if (inp) inp.value = stationMeta[cur.id]?.cwop_callsign || "";
+        }
     } catch (e) { }
 }
 
@@ -374,6 +384,7 @@ function updateMetrics(d, histRows) {
     // Station
     setText("station-id-display", d.station_id || currentStation);
     setText("station-readings", histRows ? histRows.length + " pts" : "—");
+    updateSourceRow();
 }
 
 // ── Alerts ────────────────────────────────────────────────────────────────────
@@ -556,9 +567,48 @@ if (applyBtn) {
     });
 }
 
+// ── CWOP input ────────────────────────────────────────────────────────────────
+function initCwopInput() {
+    const inp = $("cwop-callsign-input");
+    if (!inp) return;
+
+    async function saveLink() {
+        const cs = inp.value.trim().toUpperCase();
+        try {
+            const res = await fetch(`/api/stations/${currentStation}/cwop`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cwop_callsign: cs }),
+            });
+            if (res.ok) {
+                if (stationMeta[currentStation]) stationMeta[currentStation].cwop_callsign = cs;
+                inp.value = cs;
+                updateSourceRow();
+            }
+        } catch (e) {
+            console.warn("CWOP link save failed:", e);
+        }
+    }
+
+    inp.addEventListener("blur", saveLink);
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") { inp.blur(); } });
+}
+
+function updateSourceRow() {
+    const sourceEl = document.querySelector('[data-card-id="station"] .metric-sub-row:first-child span:last-child');
+    if (!sourceEl) return;
+    const cs = stationMeta[currentStation]?.cwop_callsign;
+    if (cs) {
+        sourceEl.innerHTML = `APRS-IS (CWOP) <span style="color:var(--accent);font-size:.72rem;">${cs}</span>`;
+    } else {
+        sourceEl.textContent = "Open-Meteo";
+    }
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 loadSettings();
 initSettings();
+initCwopInput();
 initStationTabs();
 fetchAll();
 restartRefreshTimer();

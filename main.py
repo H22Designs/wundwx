@@ -4,6 +4,7 @@ import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -80,7 +81,8 @@ def get_db():
 # ── Station list ─────────────────────────────────────────────────────────────
 @app.get("/api/stations")
 def list_stations():
-    return [{"id": k, "name": v["name"], "lat": v["lat"], "lon": v["lon"]} for k, v in STATIONS.items()]
+    return [{"id": k, "name": v["name"], "lat": v["lat"], "lon": v["lon"],
+             "cwop_callsign": v.get("cwop_callsign") or ""} for k, v in STATIONS.items()]
 
 # ── Current observation ──────────────────────────────────────────────────────
 @app.get("/api/current")
@@ -280,6 +282,21 @@ def trigger_integrity_repair(background_tasks: BackgroundTasks):
     """
     background_tasks.add_task(poller.repair_integrity, 5)
     return {"status": "repair started", "message": "Integrity repair running in the background."}
+
+
+# ── CWOP link configuration ───────────────────────────────────────────────────
+class CwopLinkRequest(BaseModel):
+    cwop_callsign: Optional[str] = None
+
+
+@app.patch("/api/stations/{station_id}/cwop")
+def set_cwop_link(station_id: str, body: CwopLinkRequest):
+    sid = station_id.upper()
+    if sid not in STATIONS:
+        raise HTTPException(status_code=404, detail=f"Station '{sid}' not found")
+    poller.update_cwop_link(sid, body.cwop_callsign or "")
+    return {"status": "ok", "station_id": sid,
+            "cwop_callsign": (body.cwop_callsign or "").strip().upper()}
 
 
 # ── Static files ─────────────────────────────────────────────────────────────

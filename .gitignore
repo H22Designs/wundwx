@@ -11,3 +11,4 @@ weather.db
 .idea/
 *.log
 static/js/*.map
+station_config.json

@@ -1,4 +1,9 @@
+import json
+import os
 import time
+import math
+import re
+import socket
 import requests
 import datetime
 import threading
@@ -6,18 +11,245 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, WeatherRecord
 
 STATIONS = {
-    "KALMILLP10": {"name": "Millport Primary", "lat": 33.544, "lon": -88.133},
-    "KALKENNE5": {"name": "Kennedy Station", "lat": 33.587, "lon": -88.080},
-    "KALMILLP8": {"name": "Millport Alt", "lat": 33.540, "lon": -88.100},
+    "KALMILLP10": {"name": "Millport Primary", "lat": 33.544, "lon": -88.133, "cwop_callsign": "GW7151"},
+    "KALKENNE5":  {"name": "Kennedy Station",   "lat": 33.587, "lon": -88.080, "cwop_callsign": "FW4617"},
+    "KALMILLP8":  {"name": "Millport Alt",      "lat": 33.540, "lon": -88.100},
 }
+
+STATION_CONFIG_PATH = "station_config.json"
+
+# Open-Meteo polling config
+OPENMETEO_STATIONS = {"KALMILLP10", "KALKENNE5", "KALMILLP8"}
 # Persist a fresh observation roughly once per minute.
 POLL_INTERVAL_SECONDS = 60
 STATION_REQUEST_GAP_SECONDS = 1
 INTEGRITY_SLOT_MINUTES = 60  # expected observation interval (hourly from Open-Meteo)
 
+# ── APRS-IS / CWOP config ─────────────────────────────────────────────────────
+# Derived maps – rebuilt after loading station_config.json
+CWOP_TO_STATION: dict = {}
+CWOP_CALLSIGNS: set = set()
+APRS_IS_HOST   = "rotate.aprs2.net"
+APRS_IS_PORT   = 14580
+# Range filter centred between the two CWOP stations (100 km radius).
+# The b/ budlist filter requires a verified ham-radio login; r/ + t/w does not.
+APRS_IS_FILTER = "t/w r/33.74/-88.14/100"
+
+
+def _rebuild_cwop_maps():
+    global CWOP_TO_STATION, CWOP_CALLSIGNS
+    CWOP_TO_STATION = {info["cwop_callsign"]: sid
+                       for sid, info in STATIONS.items() if info.get("cwop_callsign")}
+    CWOP_CALLSIGNS = set(CWOP_TO_STATION.keys())
+
+
+def load_station_config():
+    """Read station_config.json and apply cwop_callsign overrides, then rebuild maps."""
+    if os.path.exists(STATION_CONFIG_PATH):
+        try:
+            with open(STATION_CONFIG_PATH) as f:
+                config = json.load(f)
+            for sid, overrides in config.items():
+                if sid in STATIONS and "cwop_callsign" in overrides:
+                    STATIONS[sid]["cwop_callsign"] = overrides["cwop_callsign"] or ""
+            print(f"[config] Loaded {STATION_CONFIG_PATH}")
+        except Exception as e:
+            print(f"[config] Failed to load {STATION_CONFIG_PATH}: {e}")
+    _rebuild_cwop_maps()
+
+
+load_station_config()
+
+
+def update_cwop_link(station_id: str, cwop_callsign: str):
+    """Change or clear the CWOP callsign link for a station, and persist to JSON."""
+    if station_id not in STATIONS:
+        return
+    cs = (cwop_callsign or "").strip().upper()
+    STATIONS[station_id]["cwop_callsign"] = cs
+    _rebuild_cwop_maps()
+    config = {}
+    if os.path.exists(STATION_CONFIG_PATH):
+        try:
+            with open(STATION_CONFIG_PATH) as f:
+                config = json.load(f)
+        except Exception:
+            pass
+    if station_id not in config:
+        config[station_id] = {}
+    config[station_id]["cwop_callsign"] = cs
+    with open(STATION_CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
+    print(f"[config] {station_id} cwop_callsign = '{cs}'")
+
 
 def _utcnow_naive():
     return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+
+
+# ── APRS packet parsing ───────────────────────────────────────────────────────
+# Individual field regexes – fields may appear in any order after the _ symbol.
+_RE_WDIR  = re.compile(r'_(\d{3})/')          # wind direction (degrees)
+_RE_WSPD  = re.compile(r'_\d{3}/(\d{3})')     # wind speed (mph)
+_RE_WGST  = re.compile(r'g(\d{3})')           # wind gust (mph)
+_RE_TEMP  = re.compile(r't(-?\d{1,3})')       # temperature (°F)
+_RE_RAIN1 = re.compile(r'r(\d{1,4})')         # rain last hour (0.01 in)
+_RE_RAIN0 = re.compile(r'P(\d{1,4})')         # rain since midnight (0.01 in)
+_RE_HUM   = re.compile(r'h(\d{2})')           # humidity (%, 00 = 100)
+_RE_BARO  = re.compile(r'b(\d{4,5})')         # pressure (0.1 hPa)
+_RE_LUX   = re.compile(r'[Ll](\d{1,4})')      # solar radiation (W/m²)
+_RE_LAT   = re.compile(r'(\d{4}\.\d{2})([NS])')
+_RE_LON   = re.compile(r'(\d{5}\.\d{2})([EW])')
+
+
+def _aprs_field(pat, text, scale=1.0, default=None):
+    m = pat.search(text)
+    if not m:
+        return default
+    try:
+        return float(m.group(1)) * scale
+    except (ValueError, TypeError):
+        return default
+
+
+def _dew_point(temp_f, rh):
+    """Magnus-formula dew point.  Inputs: temp °F, RH %.  Returns °F."""
+    if temp_f is None or rh is None:
+        return None
+    tc = (temp_f - 32) * 5 / 9
+    g = math.log(max(rh, 1) / 100.0) + 17.62 * tc / (243.12 + tc)
+    dp_c = 243.12 * g / (17.62 - g)
+    return round(dp_c * 9 / 5 + 32, 1)
+
+
+def _ddmm_to_dec(ddmm_str, hemi):
+    """Convert APRS DDMM.MM[NS/EW] to signed decimal degrees."""
+    v = float(ddmm_str)
+    deg = int(v / 100)
+    dec = deg + (v - deg * 100) / 60.0
+    return round(-dec if hemi in ('S', 'W') else dec, 5)
+
+
+def parse_aprs_wx(callsign, packet_body):
+    """
+    Parse an APRS weather packet body string.
+    Returns a weather-record dict suitable for save_weather_record(), or None
+    if the packet has no temperature (i.e. is not a real wx packet).
+    Also updates STATIONS[callsign] lat/lon the first time coordinates are seen.
+    """
+    if '_' not in packet_body:
+        return None
+
+    temp_f = _aprs_field(_RE_TEMP, packet_body)
+    if temp_f is None:
+        return None
+
+    hum = _aprs_field(_RE_HUM, packet_body)
+    if hum is not None:
+        hum = 100.0 if hum == 0.0 else hum   # h00 encodes 100 %
+
+    baro_01hpa = _aprs_field(_RE_BARO, packet_body)
+    pressure   = _hpa_to_inhg(baro_01hpa / 10.0) if baro_01hpa else None
+
+    wdir = _aprs_field(_RE_WDIR, packet_body)
+    wspd = _aprs_field(_RE_WSPD, packet_body)
+    wgst = _aprs_field(_RE_WGST, packet_body)
+
+    # Auto-update station coordinates the first time we see a position fix
+    sid = callsign.upper()
+    if sid in STATIONS and STATIONS[sid].get("lat") is None:
+        m_lat = _RE_LAT.search(packet_body)
+        m_lon = _RE_LON.search(packet_body)
+        if m_lat and m_lon:
+            STATIONS[sid]["lat"] = _ddmm_to_dec(m_lat.group(1), m_lat.group(2))
+            STATIONS[sid]["lon"] = _ddmm_to_dec(m_lon.group(1), m_lon.group(2))
+            print(f"[APRS-IS] Updated coords for {sid}: "
+                  f"{STATIONS[sid]['lat']}, {STATIONS[sid]['lon']}")
+
+    return {
+        "station_id":      sid,
+        "timestamp":       _utcnow_naive(),
+        "temperature":     temp_f,
+        "humidity":        hum,
+        "dew_point":       _dew_point(temp_f, hum),
+        "heat_index":      None,
+        "wind_chill":      None,
+        "wind_speed":      wspd,
+        "wind_dir":        int(wdir) if wdir is not None else None,
+        "wind_gust":       wgst,
+        "pressure":        pressure,
+        "precip_rate":     _aprs_field(_RE_RAIN1, packet_body, scale=0.01),
+        "precip_total":    _aprs_field(_RE_RAIN0, packet_body, scale=0.01),
+        "solar_radiation": _aprs_field(_RE_LUX,   packet_body),
+        "uv_index":        None,
+    }
+
+
+# ── APRS-IS listener ──────────────────────────────────────────────────────────
+def aprs_listener_loop():
+    """
+    Persistent receive-only connection to APRS-IS.
+    Uses a range+type filter (works without a verified ham-radio login).
+    Filters arriving packets client-side to CWOP_CALLSIGNS only.
+    Auto-reconnects on any error.
+    """
+    if not CWOP_CALLSIGNS:
+        return
+
+    while True:
+        sock = None
+        db   = None
+        try:
+            print(f"[APRS-IS] Connecting to {APRS_IS_HOST}:{APRS_IS_PORT} …")
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(120)           # 2-min idle timeout; server sends keepalives
+            sock.connect((APRS_IS_HOST, APRS_IS_PORT))
+            sock.recv(256)                 # banner
+
+            sock.sendall(b"user N0CALL pass -1 vers WxDash 1.0\r\n")
+            time.sleep(0.4)
+            sock.recv(256)                 # logresp
+
+            sock.sendall(f"#filter {APRS_IS_FILTER}\r\n".encode())
+            print(f"[APRS-IS] Filter: {APRS_IS_FILTER}")
+            print(f"[APRS-IS] Watching for: {', '.join(sorted(CWOP_CALLSIGNS))}")
+
+            db  = SessionLocal()
+            buf = ""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    raise ConnectionError("Server closed connection")
+                buf += chunk.decode("utf-8", errors="replace")
+                lines = buf.split("\n")
+                buf   = lines[-1]           # keep incomplete trailing line
+                for line in lines[:-1]:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    callsign = line.split(">")[0].upper()
+                    if callsign not in CWOP_CALLSIGNS:
+                        continue
+                    body = line.split(":", 1)[1] if ":" in line else ""
+                    station_id = CWOP_TO_STATION.get(callsign, callsign)
+                    record = parse_aprs_wx(station_id, body)
+                    if record:
+                        save_weather_record(db, record)
+                        tag = f"{callsign} → {station_id}" if station_id != callsign else callsign
+                        print(f"[APRS-IS] {tag}: {record['temperature']}°F  "
+                              f"hum={record['humidity']}%  "
+                              f"pres={record['pressure']} inHg")
+
+        except Exception as exc:
+            print(f"[APRS-IS] Lost connection: {exc}. Reconnecting in 30 s …")
+        finally:
+            if db:
+                try: db.close()
+                except Exception: pass
+            if sock:
+                try: sock.close()
+                except Exception: pass
+        time.sleep(30)
 
 
 def _http_get_json(url, timeout=20, attempts=3, backoff=1.5):
@@ -326,11 +558,12 @@ def repair_integrity(days=5):
 
 def poll_loop():
     threading.Thread(target=repair_integrity, args=(5,), daemon=True).start()
+    threading.Thread(target=aprs_listener_loop, daemon=True).start()
     print("Starting background polling loop...")
     db = SessionLocal()
     try:
         while True:
-            for station_id in STATIONS.keys():
+            for station_id in OPENMETEO_STATIONS:
                 record_data = fetch_current_weather(station_id)
                 if record_data:
                     save_weather_record(db, record_data)
