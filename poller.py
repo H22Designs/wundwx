@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import time
 import requests
@@ -75,6 +77,77 @@ def fetch_historical_weather(station_id, date_str):
                 })
     except Exception as e:
         print(f"Error fetching historical weather for {station_id} {date_str}: {e}")
+    return records
+
+
+def fetch_historical_weather_scrape(station_id, date_str):
+    """Fetch PWS historical data via the WunderGround public CSV export endpoint.
+
+    This endpoint does not require an API key.  The response is a CSV document
+    (comma-separated, with <br> used as line endings) exported by:
+      https://www.wunderground.com/weatherstation/WXDailyHistory.asp
+    """
+    year  = int(date_str[:4])
+    month = int(date_str[4:6])
+    day   = int(date_str[6:8])
+    url = (
+        "https://www.wunderground.com/weatherstation/WXDailyHistory.asp"
+        f"?ID={station_id}&day={day}&month={month}&year={year}"
+        "&graphspan=day&format=1"
+    )
+    records = []
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; wundwx-poller/1.0)"}
+        response = requests.get(url, timeout=15, headers=headers)
+        response.raise_for_status()
+
+        # The endpoint uses <br> as line endings; normalise to real newlines.
+        text = response.text.replace("<br />", "\n").replace("<br/>", "\n").replace("<br>", "\n")
+        reader = csv.DictReader(io.StringIO(text.strip()))
+
+        def _float(val):
+            """Return float or None for empty / non-numeric values."""
+            try:
+                return float(val) if val and val.strip() not in ("", "N/A", "-") else None
+            except (ValueError, TypeError):
+                return None
+
+        for row in reader:
+            date_utc_str = (row.get("DateUTC") or "").strip()
+            if not date_utc_str:
+                continue
+            try:
+                ts = datetime.datetime.strptime(date_utc_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+
+            # Pressure in the CSV export is in hPa; convert to inHg to match
+            # the imperial units used by the rest of the application.
+            # WU stations may report the column as 'PressurehPa' or 'Pressurehpa'
+            # depending on the station firmware version, so we check both casings.
+            pressure_hpa = _float(row.get("PressurehPa") or row.get("Pressurehpa") or "")
+            pressure_inhg = round(pressure_hpa / 33.8639, 2) if pressure_hpa is not None else None
+
+            records.append({
+                "station_id":     station_id,
+                "timestamp":      ts,
+                "temperature":    _float(row.get("TemperatureF")),
+                "humidity":       _float(row.get("Humidity")),
+                "dew_point":      _float(row.get("DewpointF")),
+                "heat_index":     None,   # not provided by WXDailyHistory.asp CSV
+                "wind_chill":     None,   # not provided by WXDailyHistory.asp CSV
+                "wind_speed":     _float(row.get("WindSpeedMPH")),
+                "wind_dir":       _float(row.get("WindDirectionDegrees")),
+                "wind_gust":      _float(row.get("WindSpeedGustMPH")),
+                "pressure":       pressure_inhg,
+                "precip_rate":    _float(row.get("HourlyPrecipIn")),
+                "precip_total":   _float(row.get("dailyrainin")),
+                # Column name contains special characters exactly as WU exports it.
+                "solar_radiation": _float(row.get("SolarRadiationWatts/m^2")),
+                "uv_index":       None,   # not provided by WXDailyHistory.asp CSV
+            })
+    except Exception as e:
+        print(f"Error scraping historical weather for {station_id} {date_str}: {e}")
     return records
 
 
@@ -217,8 +290,8 @@ def repair_integrity(days=INTEGRITY_DAYS):
     try:
         for station_id, date_set in needs_repair.items():
             for date_str in sorted(date_set):
-                print(f"  Fetching {station_id} {date_str} from Weather Underground...")
-                records = fetch_historical_weather(station_id, date_str)
+                print(f"  Fetching {station_id} {date_str} from Weather Underground (public CSV)...")
+                records = fetch_historical_weather_scrape(station_id, date_str)
                 saved = 0
                 for rec in records:
                     result = save_weather_record(db, rec)
