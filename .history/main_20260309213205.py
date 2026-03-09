@@ -17,10 +17,9 @@ def _utcnow_naive():
 
 
 def _record_to_payload(record: WeatherRecord):
-    ts = getattr(record, "timestamp", None)
     return {
         "station_id": record.station_id,
-        "obs_time_utc": ts.strftime("%Y-%m-%dT%H:%M:%SZ") if ts is not None else None,
+        "obs_time_utc": record.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if record.timestamp else None,
         "temp_f": record.temperature,
         "humidity_pct": record.humidity,
         "dew_point_f": record.dew_point,
@@ -121,11 +120,9 @@ def get_weather_history(
         cutoff = _utcnow_naive() - datetime.timedelta(hours=hours)
         query = query.filter(WeatherRecord.timestamp >= cutoff)
 
-    # Return the newest `limit` rows, then flip back to chronological order.
-    records = query.order_by(WeatherRecord.timestamp.desc()).limit(limit).all()
-    records = list(reversed(records))
+    records = query.order_by(WeatherRecord.timestamp).limit(limit).all()
     return [{
-        "obs_time_utc": r.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if r.timestamp is not None else None,
+        "obs_time_utc": r.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if r.timestamp else None,
         "temp_f": r.temperature,
         "humidity_pct": r.humidity,
         "dew_point_f": r.dew_point,
@@ -151,13 +148,13 @@ def get_today_summary(station: str = DEFAULT_STATION, db: Session = Depends(get_
     ).all()
     if not records:
         return None
-    temps = [float(r.temperature) for r in records if isinstance(r.temperature, (int, float))]
-    humids = [float(r.humidity) for r in records if isinstance(r.humidity, (int, float))]
-    pressures = [float(r.pressure) for r in records if isinstance(r.pressure, (int, float))]
-    gusts = [float(r.wind_gust) for r in records if isinstance(r.wind_gust, (int, float))]
-    rains = [float(r.precip_total) for r in records if isinstance(r.precip_total, (int, float))]
-    uvs = [float(r.uv_index) for r in records if isinstance(r.uv_index, (int, float))]
-    solars = [float(r.solar_radiation) for r in records if isinstance(r.solar_radiation, (int, float))]
+    temps = [r.temperature for r in records if r.temperature is not None]
+    humids = [r.humidity for r in records if r.humidity is not None]
+    pressures = [r.pressure for r in records if r.pressure is not None]
+    gusts = [r.wind_gust for r in records if r.wind_gust is not None]
+    rains = [r.precip_total for r in records if r.precip_total is not None]
+    uvs = [r.uv_index for r in records if r.uv_index is not None]
+    solars = [r.solar_radiation for r in records if r.solar_radiation is not None]
     return {
         "temp_high_f": max(temps) if temps else None,
         "temp_low_f": min(temps) if temps else None,
@@ -184,18 +181,18 @@ def get_daily_summary(station: str = DEFAULT_STATION, days: int = 30, db: Sessio
     from collections import defaultdict
     by_day = defaultdict(list)
     for r in records:
-        if r.timestamp is not None:
+        if r.timestamp:
             by_day[r.timestamp.strftime("%Y-%m-%d")].append(r)
 
     result = []
     for day in sorted(by_day.keys(), reverse=True):
         recs = by_day[day]
-        temps = [float(r.temperature) for r in recs if isinstance(r.temperature, (int, float))]
-        humids = [float(r.humidity) for r in recs if isinstance(r.humidity, (int, float))]
-        pressures = [float(r.pressure) for r in recs if isinstance(r.pressure, (int, float))]
-        gusts = [float(r.wind_gust) for r in recs if isinstance(r.wind_gust, (int, float))]
-        rains = [float(r.precip_total) for r in recs if isinstance(r.precip_total, (int, float))]
-        uvs = [float(r.uv_index) for r in recs if isinstance(r.uv_index, (int, float))]
+        temps = [r.temperature for r in recs if r.temperature is not None]
+        humids = [r.humidity for r in recs if r.humidity is not None]
+        pressures = [r.pressure for r in recs if r.pressure is not None]
+        gusts = [r.wind_gust for r in recs if r.wind_gust is not None]
+        rains = [r.precip_total for r in recs if r.precip_total is not None]
+        uvs = [r.uv_index for r in recs if r.uv_index is not None]
         result.append({
             "day": day,
             "temp_high_f": max(temps) if temps else None,

@@ -1,7 +1,6 @@
 import time
 import requests
 import datetime
-import threading
 from sqlalchemy.orm import Session
 from database import SessionLocal, WeatherRecord
 
@@ -10,31 +9,8 @@ STATIONS = {
     "KALKENNE5": {"name": "Kennedy Station", "lat": 33.587, "lon": -88.080},
     "KALMILLP8": {"name": "Millport Alt", "lat": 33.540, "lon": -88.100},
 }
-# Persist a fresh observation roughly once per minute.
-POLL_INTERVAL_SECONDS = 60
-STATION_REQUEST_GAP_SECONDS = 1
+POLL_INTERVAL_SECONDS = 30
 INTEGRITY_SLOT_MINUTES = 60  # expected observation interval (hourly from Open-Meteo)
-
-
-def _utcnow_naive():
-    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
-
-
-def _http_get_json(url, timeout=20, attempts=3, backoff=1.5):
-    last_err = None
-    for attempt in range(1, attempts + 1):
-        try:
-            response = requests.get(url, timeout=timeout)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            last_err = e
-            if attempt < attempts:
-                sleep_s = backoff ** (attempt - 1)
-                time.sleep(sleep_s)
-    if last_err is not None:
-        raise last_err
-    raise RuntimeError("HTTP request failed without exception details")
 
 
 def _hpa_to_inhg(hpa):
@@ -85,14 +61,15 @@ def fetch_current_weather(station_id):
         return None
     url = _open_meteo_current_url(info["lat"], info["lon"])
     try:
-        data = _http_get_json(url, timeout=20, attempts=3, backoff=1.7)
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
         current = data.get("current", {})
-        if current:
+        ts = current.get("time")
+        if ts:
             return {
                 "station_id": sid,
-            # Use poll time to preserve a continuous local time-series even when
-            # upstream "current.time" only advances infrequently.
-            "timestamp": _utcnow_naive(),
+                "timestamp": datetime.datetime.fromisoformat(ts).replace(tzinfo=None),
                 "temperature": current.get("temperature_2m"),
                 "humidity": current.get("relative_humidity_2m"),
                 "dew_point": current.get("dew_point_2m"),
@@ -124,7 +101,9 @@ def fetch_historical_weather(station_id, date_str):
     url = _open_meteo_history_url(info["lat"], info["lon"], day)
     records = []
     try:
-        data = _http_get_json(url, timeout=25, attempts=3, backoff=1.8)
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
         hourly = data.get("hourly", {})
         times = hourly.get("time", [])
         for i, ts in enumerate(times):
@@ -137,23 +116,23 @@ def fetch_historical_weather(station_id, date_str):
                 values = hourly.get(key, [])
                 return values[i] if i < len(values) else None
 
-            records.append({
-                "station_id": sid,
-                "timestamp": timestamp,
-                "temperature": hv("temperature_2m"),
-                "humidity": hv("relative_humidity_2m"),
-                "dew_point": hv("dew_point_2m"),
-                "heat_index": hv("apparent_temperature"),
-                "wind_chill": None,
-                "wind_speed": hv("wind_speed_10m"),
-                "wind_dir": hv("wind_direction_10m"),
-                "wind_gust": hv("wind_gusts_10m"),
-                "pressure": _hpa_to_inhg(hv("surface_pressure")),
-                "precip_rate": hv("precipitation"),
-                "precip_total": hv("precipitation"),
-                "solar_radiation": hv("shortwave_radiation"),
-                "uv_index": hv("uv_index"),
-            })
+                records.append({
+                    "station_id": sid,
+                    "timestamp": timestamp,
+                    "temperature": hv("temperature_2m"),
+                    "humidity": hv("relative_humidity_2m"),
+                    "dew_point": hv("dew_point_2m"),
+                    "heat_index": hv("apparent_temperature"),
+                    "wind_chill": None,
+                    "wind_speed": hv("wind_speed_10m"),
+                    "wind_dir": hv("wind_direction_10m"),
+                    "wind_gust": hv("wind_gusts_10m"),
+                    "pressure": _hpa_to_inhg(hv("surface_pressure")),
+                    "precip_rate": hv("precipitation"),
+                    "precip_total": hv("precipitation"),
+                    "solar_radiation": hv("shortwave_radiation"),
+                    "uv_index": hv("uv_index"),
+                })
     except Exception as e:
         print(f"Error fetching historical weather for {sid or station_id} {date_str}: {e}")
     return records
@@ -180,12 +159,12 @@ def backfill():
                 WeatherRecord.station_id == station_id
             ).order_by(WeatherRecord.timestamp.desc()).first()
 
-            if latest and (_utcnow_naive() - latest.timestamp).days < 1:
+            if latest and (datetime.datetime.utcnow() - latest.timestamp).days < 1:
                 print(f"Recent data found for {station_id}. Skipping backfill.")
                 continue
 
             print(f"Starting 5-day backfill for {station_id}...")
-            today = _utcnow_naive().date()
+            today = datetime.datetime.utcnow().date()
             for i in range(5):
                 past_date = today - datetime.timedelta(days=i)
                 date_str = past_date.strftime("%Y%m%d")
@@ -215,7 +194,7 @@ def check_integrity(days=5):
     """
     db = SessionLocal()
     try:
-        now = _utcnow_naive()
+        now = datetime.datetime.utcnow()
         cutoff = now - datetime.timedelta(days=days)
         report = {}
 
@@ -227,7 +206,7 @@ def check_integrity(days=5):
                 WeatherRecord.temperature == None,
             ).count()
 
-            # ── Missing hourly slots ─────────────────────────────────────
+            # ── Missing 30-min slots ─────────────────────────────────────
             rows = db.query(WeatherRecord.timestamp).filter(
                 WeatherRecord.station_id == station_id,
                 WeatherRecord.timestamp >= cutoff,
@@ -266,7 +245,7 @@ def repair_integrity(days=5):
     """
     db = SessionLocal()
     try:
-        now = _utcnow_naive()
+        now = datetime.datetime.utcnow()
         cutoff = now - datetime.timedelta(days=days)
         summary = {}
 
@@ -289,7 +268,7 @@ def repair_integrity(days=5):
                 db.commit()
                 station_summary["corrupt_removed"] = len(corrupt)
 
-            # ── Step 2: Find missing hourly slots ────────────────────────
+            # ── Step 2: Find missing 30-min slots ────────────────────────
             rows = db.query(WeatherRecord.timestamp).filter(
                 WeatherRecord.station_id == station_id,
                 WeatherRecord.timestamp >= cutoff,
@@ -325,7 +304,7 @@ def repair_integrity(days=5):
 
 
 def poll_loop():
-    threading.Thread(target=repair_integrity, args=(5,), daemon=True).start()
+    repair_integrity()
     print("Starting background polling loop...")
     db = SessionLocal()
     try:
@@ -335,7 +314,7 @@ def poll_loop():
                 if record_data:
                     save_weather_record(db, record_data)
                     print(f"[{datetime.datetime.now().isoformat()}] {station_id}: {record_data['temperature']}°F")
-                time.sleep(STATION_REQUEST_GAP_SECONDS)  # small delay between stations
+                time.sleep(2)  # small delay between stations
             time.sleep(POLL_INTERVAL_SECONDS)
     except Exception as e:
         print(f"Polling loop encountered error: {e}")

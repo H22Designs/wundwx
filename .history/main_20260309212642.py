@@ -1,7 +1,6 @@
 import os
 import threading
 import datetime
-from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
@@ -12,15 +11,39 @@ from database import SessionLocal, WeatherRecord, engine, Base
 import poller
 import requests as http_requests
 
-def _utcnow_naive():
-    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+app = FastAPI(title="Weather Dashboard API")
 
+STATIONS = poller.STATIONS
+DEFAULT_STATION = "KALMILLP10"
 
-def _record_to_payload(record: WeatherRecord):
-    ts = getattr(record, "timestamp", None)
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.on_event("startup")
+def startup_event():
+    thread = threading.Thread(target=poller.poll_loop, daemon=True)
+    thread.start()
+
+# ── Station list ─────────────────────────────────────────────────────────────
+@app.get("/api/stations")
+def list_stations():
+    return [{"id": k, "name": v["name"], "lat": v["lat"], "lon": v["lon"]} for k, v in STATIONS.items()]
+
+# ── Current observation ──────────────────────────────────────────────────────
+@app.get("/api/current")
+def get_current_weather(station: str = DEFAULT_STATION, db: Session = Depends(get_db)):
+    record = db.query(WeatherRecord).filter(
+        WeatherRecord.station_id == station.upper()
+    ).order_by(desc(WeatherRecord.timestamp)).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="No data yet for " + station)
     return {
         "station_id": record.station_id,
-        "obs_time_utc": ts.strftime("%Y-%m-%dT%H:%M:%SZ") if ts is not None else None,
+        "obs_time_utc": record.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if record.timestamp else None,
         "temp_f": record.temperature,
         "humidity_pct": record.humidity,
         "dew_point_f": record.dew_point,
@@ -35,68 +58,6 @@ def _record_to_payload(record: WeatherRecord):
         "solar_radiation_wm2": record.solar_radiation,
         "uv_index": record.uv_index,
     }
-
-
-def _dict_to_payload(record_data: dict):
-    ts = record_data.get("timestamp")
-    return {
-        "station_id": record_data.get("station_id"),
-        "obs_time_utc": ts.strftime("%Y-%m-%dT%H:%M:%SZ") if ts else None,
-        "temp_f": record_data.get("temperature"),
-        "humidity_pct": record_data.get("humidity"),
-        "dew_point_f": record_data.get("dew_point"),
-        "heat_index_f": record_data.get("heat_index"),
-        "wind_chill_f": record_data.get("wind_chill"),
-        "wind_speed_mph": record_data.get("wind_speed"),
-        "wind_dir_deg": record_data.get("wind_dir"),
-        "wind_gust_mph": record_data.get("wind_gust"),
-        "pressure_in": record_data.get("pressure"),
-        "precip_rate_in_hr": record_data.get("precip_rate"),
-        "precip_total_in": record_data.get("precip_total"),
-        "solar_radiation_wm2": record_data.get("solar_radiation"),
-        "uv_index": record_data.get("uv_index"),
-    }
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    thread = threading.Thread(target=poller.poll_loop, daemon=True)
-    thread.start()
-    yield
-
-
-app = FastAPI(title="Weather Dashboard API", lifespan=lifespan)
-
-STATIONS = poller.STATIONS
-DEFAULT_STATION = "KALMILLP10"
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# ── Station list ─────────────────────────────────────────────────────────────
-@app.get("/api/stations")
-def list_stations():
-    return [{"id": k, "name": v["name"], "lat": v["lat"], "lon": v["lon"]} for k, v in STATIONS.items()]
-
-# ── Current observation ──────────────────────────────────────────────────────
-@app.get("/api/current")
-def get_current_weather(station: str = DEFAULT_STATION, db: Session = Depends(get_db)):
-    record = db.query(WeatherRecord).filter(
-        WeatherRecord.station_id == station.upper()
-    ).order_by(desc(WeatherRecord.timestamp)).first()
-    if record is not None:
-        return _record_to_payload(record)
-
-    live = poller.fetch_current_weather(station)
-    if live:
-        poller.save_weather_record(db, live)
-        return _dict_to_payload(live)
-
-    raise HTTPException(status_code=503, detail="Current weather temporarily unavailable for " + station)
 
 # ── History ──────────────────────────────────────────────────────────────────
 @app.get("/api/history")
@@ -118,14 +79,12 @@ def get_weather_history(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid datetime format.")
     else:
-        cutoff = _utcnow_naive() - datetime.timedelta(hours=hours)
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=hours)
         query = query.filter(WeatherRecord.timestamp >= cutoff)
 
-    # Return the newest `limit` rows, then flip back to chronological order.
-    records = query.order_by(WeatherRecord.timestamp.desc()).limit(limit).all()
-    records = list(reversed(records))
+    records = query.order_by(WeatherRecord.timestamp).limit(limit).all()
     return [{
-        "obs_time_utc": r.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if r.timestamp is not None else None,
+        "obs_time_utc": r.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if r.timestamp else None,
         "temp_f": r.temperature,
         "humidity_pct": r.humidity,
         "dew_point_f": r.dew_point,
@@ -144,20 +103,20 @@ def get_weather_history(
 # ── Today summary ────────────────────────────────────────────────────────────
 @app.get("/api/today")
 def get_today_summary(station: str = DEFAULT_STATION, db: Session = Depends(get_db)):
-    today_start = _utcnow_naive().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     records = db.query(WeatherRecord).filter(
         WeatherRecord.station_id == station.upper(),
         WeatherRecord.timestamp >= today_start
     ).all()
     if not records:
         return None
-    temps = [float(r.temperature) for r in records if isinstance(r.temperature, (int, float))]
-    humids = [float(r.humidity) for r in records if isinstance(r.humidity, (int, float))]
-    pressures = [float(r.pressure) for r in records if isinstance(r.pressure, (int, float))]
-    gusts = [float(r.wind_gust) for r in records if isinstance(r.wind_gust, (int, float))]
-    rains = [float(r.precip_total) for r in records if isinstance(r.precip_total, (int, float))]
-    uvs = [float(r.uv_index) for r in records if isinstance(r.uv_index, (int, float))]
-    solars = [float(r.solar_radiation) for r in records if isinstance(r.solar_radiation, (int, float))]
+    temps = [r.temperature for r in records if r.temperature is not None]
+    humids = [r.humidity for r in records if r.humidity is not None]
+    pressures = [r.pressure for r in records if r.pressure is not None]
+    gusts = [r.wind_gust for r in records if r.wind_gust is not None]
+    rains = [r.precip_total for r in records if r.precip_total is not None]
+    uvs = [r.uv_index for r in records if r.uv_index is not None]
+    solars = [r.solar_radiation for r in records if r.solar_radiation is not None]
     return {
         "temp_high_f": max(temps) if temps else None,
         "temp_low_f": min(temps) if temps else None,
@@ -175,7 +134,7 @@ def get_today_summary(station: str = DEFAULT_STATION, db: Session = Depends(get_
 # ── Daily summary (last 30 days) ────────────────────────────────────────────
 @app.get("/api/daily")
 def get_daily_summary(station: str = DEFAULT_STATION, days: int = 30, db: Session = Depends(get_db)):
-    cutoff = _utcnow_naive() - datetime.timedelta(days=days)
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
     records = db.query(WeatherRecord).filter(
         WeatherRecord.station_id == station.upper(),
         WeatherRecord.timestamp >= cutoff
@@ -184,18 +143,18 @@ def get_daily_summary(station: str = DEFAULT_STATION, days: int = 30, db: Sessio
     from collections import defaultdict
     by_day = defaultdict(list)
     for r in records:
-        if r.timestamp is not None:
+        if r.timestamp:
             by_day[r.timestamp.strftime("%Y-%m-%d")].append(r)
 
     result = []
     for day in sorted(by_day.keys(), reverse=True):
         recs = by_day[day]
-        temps = [float(r.temperature) for r in recs if isinstance(r.temperature, (int, float))]
-        humids = [float(r.humidity) for r in recs if isinstance(r.humidity, (int, float))]
-        pressures = [float(r.pressure) for r in recs if isinstance(r.pressure, (int, float))]
-        gusts = [float(r.wind_gust) for r in recs if isinstance(r.wind_gust, (int, float))]
-        rains = [float(r.precip_total) for r in recs if isinstance(r.precip_total, (int, float))]
-        uvs = [float(r.uv_index) for r in recs if isinstance(r.uv_index, (int, float))]
+        temps = [r.temperature for r in recs if r.temperature is not None]
+        humids = [r.humidity for r in recs if r.humidity is not None]
+        pressures = [r.pressure for r in recs if r.pressure is not None]
+        gusts = [r.wind_gust for r in recs if r.wind_gust is not None]
+        rains = [r.precip_total for r in recs if r.precip_total is not None]
+        uvs = [r.uv_index for r in recs if r.uv_index is not None]
         result.append({
             "day": day,
             "temp_high_f": max(temps) if temps else None,

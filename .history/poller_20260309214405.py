@@ -10,9 +10,7 @@ STATIONS = {
     "KALKENNE5": {"name": "Kennedy Station", "lat": 33.587, "lon": -88.080},
     "KALMILLP8": {"name": "Millport Alt", "lat": 33.540, "lon": -88.100},
 }
-# Persist a fresh observation roughly once per minute.
-POLL_INTERVAL_SECONDS = 60
-STATION_REQUEST_GAP_SECONDS = 1
+POLL_INTERVAL_SECONDS = 30
 INTEGRITY_SLOT_MINUTES = 60  # expected observation interval (hourly from Open-Meteo)
 
 
@@ -335,7 +333,7 @@ def poll_loop():
                 if record_data:
                     save_weather_record(db, record_data)
                     print(f"[{datetime.datetime.now().isoformat()}] {station_id}: {record_data['temperature']}°F")
-                time.sleep(STATION_REQUEST_GAP_SECONDS)  # small delay between stations
+                time.sleep(2)  # small delay between stations
             time.sleep(POLL_INTERVAL_SECONDS)
     except Exception as e:
         print(f"Polling loop encountered error: {e}")

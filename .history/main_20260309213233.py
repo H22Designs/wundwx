@@ -121,9 +121,7 @@ def get_weather_history(
         cutoff = _utcnow_naive() - datetime.timedelta(hours=hours)
         query = query.filter(WeatherRecord.timestamp >= cutoff)
 
-    # Return the newest `limit` rows, then flip back to chronological order.
-    records = query.order_by(WeatherRecord.timestamp.desc()).limit(limit).all()
-    records = list(reversed(records))
+    records = query.order_by(WeatherRecord.timestamp).limit(limit).all()
     return [{
         "obs_time_utc": r.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if r.timestamp is not None else None,
         "temp_f": r.temperature,

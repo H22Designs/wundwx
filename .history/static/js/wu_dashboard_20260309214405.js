@@ -79,11 +79,6 @@ function setText(id, val) { const el = $(id); if (el) el.textContent = val; }
 function setWidth(id, val) { const el = $(id); if (el) el.style.width = val; }
 function rotateNeedle(id, deg) { const el = $(id); if (el && deg != null) el.style.transform = `rotate(${deg}deg)`; }
 
-function restartRefreshTimer() {
-    if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = setInterval(fetchAll, refreshMs);
-}
-
 // Min/max helpers from history
 const hVals = (rows, key) => (rows || []).map(r => r[key]).filter(v => v != null);
 const hMin = (rows, key) => { const v = hVals(rows, key); return v.length ? Math.min(...v) : null; };
@@ -138,14 +133,7 @@ function loadSettings() {
         if (s.hideAlerts) { $("toggle-alerts").checked = false; }
         // Refresh select
         const ri = $("refresh-interval");
-        if (ri) {
-            const refreshSecs = String(refreshMs / 1000);
-            const supported = Array.from(ri.options).map(o => o.value);
-            if (!supported.includes(refreshSecs)) {
-                refreshMs = 30000;
-            }
-            ri.value = String(refreshMs / 1000);
-        }
+        if (ri) ri.value = String(refreshMs / 1000);
         // Temp unit select
         const tu = $("temp-unit");
         if (tu) tu.value = useCelsius ? "c" : "f";
@@ -254,8 +242,8 @@ function initSettings() {
     // Refresh interval
     $("refresh-interval")?.addEventListener("change", e => {
         refreshMs = parseInt(e.target.value) * 1000;
-        restartRefreshTimer();
-        fetchAll();
+        clearInterval(refreshTimer);
+        refreshTimer = setInterval(fetchAll, refreshMs);
         saveSettings();
     });
 
@@ -561,4 +549,4 @@ loadSettings();
 initSettings();
 initStationTabs();
 fetchAll();
-restartRefreshTimer();
+refreshTimer = setInterval(fetchAll, refreshMs);
