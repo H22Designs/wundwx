@@ -393,6 +393,10 @@ def fetch_historical_weather(station_id, date_str):
 
 def save_weather_record(db: Session, record_data: dict):
     try:
+        # Reject records with future timestamps (archive API returns forecast hours)
+        ts = record_data.get("timestamp")
+        if ts and ts > _utcnow_naive():
+            return None
         existing = db.query(WeatherRecord).filter(
             WeatherRecord.station_id == record_data.get('station_id'),
             WeatherRecord.timestamp == record_data['timestamp']
@@ -422,7 +426,7 @@ def backfill():
 
             print(f"Starting 5-day backfill for {station_id}...")
             today = _utcnow_naive().date()
-            for i in range(5):
+            for i in range(1, 6):  # skip today (i=0) — archive API returns future hours
                 past_date = today - datetime.timedelta(days=i)
                 date_str = past_date.strftime("%Y%m%d")
                 print(f"  Backfilling {station_id} {date_str}...")
@@ -539,6 +543,11 @@ def repair_integrity(days=5):
                 if slot not in covered:
                     missing_dates.add(slot.strftime("%Y%m%d"))
                 slot += datetime.timedelta(minutes=INTEGRITY_SLOT_MINUTES)
+
+            # Skip today — archive API returns forecast hours that create
+            # future-timestamped records which shadow real current data.
+            today_str = now.strftime("%Y%m%d")
+            missing_dates.discard(today_str)
 
             if not missing_dates:
                 print(f"[integrity] {station_id}: no missing slots found.")
