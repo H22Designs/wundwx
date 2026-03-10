@@ -392,17 +392,21 @@ def fetch_historical_weather(station_id, date_str):
 
 
 def save_weather_record(db: Session, record_data: dict):
-    existing = db.query(WeatherRecord).filter(
-        WeatherRecord.station_id == record_data.get('station_id'),
-        WeatherRecord.timestamp == record_data['timestamp']
-    ).first()
-    if not existing:
-        db_record = WeatherRecord(**record_data)
-        db.add(db_record)
-        db.commit()
-        db.refresh(db_record)
-        return db_record
-    return existing
+    try:
+        existing = db.query(WeatherRecord).filter(
+            WeatherRecord.station_id == record_data.get('station_id'),
+            WeatherRecord.timestamp == record_data['timestamp']
+        ).first()
+        if not existing:
+            db_record = WeatherRecord(**record_data)
+            db.add(db_record)
+            db.commit()
+            db.refresh(db_record)
+            return db_record
+        return existing
+    except Exception:
+        db.rollback()
+        raise
 
 def backfill():
     db = SessionLocal()
@@ -564,14 +568,17 @@ def poll_loop():
     try:
         while True:
             for station_id in OPENMETEO_STATIONS:
-                record_data = fetch_current_weather(station_id)
-                if record_data:
-                    save_weather_record(db, record_data)
-                    print(f"[{datetime.datetime.now().isoformat()}] {station_id}: {record_data['temperature']}°F")
-                time.sleep(STATION_REQUEST_GAP_SECONDS)  # small delay between stations
+                try:
+                    record_data = fetch_current_weather(station_id)
+                    if record_data:
+                        save_weather_record(db, record_data)
+                        print(f"[poll] {station_id}: {record_data['temperature']}°F  "
+                              f"hum={record_data['humidity']}%  "
+                              f"pres={record_data['pressure']} inHg")
+                except Exception as e:
+                    print(f"[poll] Error for {station_id}: {e}")
+                time.sleep(STATION_REQUEST_GAP_SECONDS)
             time.sleep(POLL_INTERVAL_SECONDS)
-    except Exception as e:
-        print(f"Polling loop encountered error: {e}")
     finally:
         db.close()
 

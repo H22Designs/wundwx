@@ -1,10 +1,20 @@
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime
+from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 import datetime
 
 DATABASE_URL = "sqlite:///./weather.db"
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_conn, _rec):
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")   # concurrent reads + writes
+    cur.execute("PRAGMA busy_timeout=30000") # wait up to 30 s on lock
+    cur.close()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
