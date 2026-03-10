@@ -290,6 +290,7 @@ def _open_meteo_current_url(lat, lon):
         "&current=temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,"
         "wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,"
         "shortwave_radiation,uv_index"
+        "&daily=precipitation_sum"
         "&temperature_unit=fahrenheit"
         "&wind_speed_unit=mph"
         "&precipitation_unit=inch"
@@ -320,11 +321,15 @@ def fetch_current_weather(station_id):
         data = _http_get_json(url, timeout=20, attempts=3, backoff=1.7)
         current = data.get("current", {})
         if current:
+            # daily.precipitation_sum[0] is today's accumulated rainfall
+            daily = data.get("daily", {})
+            daily_precip_sums = daily.get("precipitation_sum", [])
+            precip_today = daily_precip_sums[0] if daily_precip_sums else None
             return {
                 "station_id": sid,
-            # Use poll time to preserve a continuous local time-series even when
-            # upstream "current.time" only advances infrequently.
-            "timestamp": _utcnow_naive(),
+                # Use poll time to preserve a continuous local time-series even
+                # when upstream "current.time" only advances infrequently.
+                "timestamp": _utcnow_naive(),
                 "temperature": current.get("temperature_2m"),
                 "humidity": current.get("relative_humidity_2m"),
                 "dew_point": current.get("dew_point_2m"),
@@ -335,7 +340,7 @@ def fetch_current_weather(station_id):
                 "wind_gust": current.get("wind_gusts_10m"),
                 "pressure": _hpa_to_inhg(current.get("surface_pressure")),
                 "precip_rate": current.get("precipitation"),
-                "precip_total": current.get("precipitation"),
+                "precip_total": precip_today,
                 "solar_radiation": current.get("shortwave_radiation"),
                 "uv_index": current.get("uv_index"),
             }
