@@ -1,5 +1,3 @@
-import json
-import os
 import time
 import math
 import re
@@ -8,79 +6,92 @@ import requests
 import datetime
 import threading
 from sqlalchemy.orm import Session
-from database import SessionLocal, WeatherRecord
+from database import SessionLocal, WeatherRecord, Station
 
-STATIONS = {
-    "KALMILLP10": {"name": "Millport Primary", "lat": 33.544, "lon": -88.133, "cwop_callsign": "GW7151"},
-    "KALKENNE5":  {"name": "Kennedy Station",   "lat": 33.587, "lon": -88.080, "cwop_callsign": "FW4617"},
-    "KALMILLP8":  {"name": "Millport Alt",      "lat": 33.540, "lon": -88.100},
-}
+# ── Default station definitions (seeded into DB on first run) ─────────────────
+_DEFAULT_STATIONS = [
+    {"station_id": "KALMILLP10", "name": "Millport Primary", "lat": 33.544, "lon": -88.133,
+     "cwop_callsign": "GW7151", "source_type": "openmeteo"},
+    {"station_id": "KALKENNE5",  "name": "Kennedy Station",  "lat": 33.587, "lon": -88.080,
+     "cwop_callsign": "FW4617", "source_type": "openmeteo"},
+    {"station_id": "KALMILLP8",  "name": "Millport Alt",     "lat": 33.540, "lon": -88.100,
+     "cwop_callsign": "",       "source_type": "openmeteo"},
+]
 
-STATION_CONFIG_PATH = "station_config.json"
-
-# Open-Meteo polling config
-OPENMETEO_STATIONS = {"KALMILLP10", "KALKENNE5", "KALMILLP8"}
-# Persist a fresh observation roughly once per minute.
-POLL_INTERVAL_SECONDS = 60
-STATION_REQUEST_GAP_SECONDS = 1
-INTEGRITY_SLOT_MINUTES = 60  # expected observation interval (hourly from Open-Meteo)
-
-# ── APRS-IS / CWOP config ─────────────────────────────────────────────────────
-# Derived maps – rebuilt after loading station_config.json
+# ── Runtime station state (rebuilt from DB via reload_stations()) ──────────────
+STATIONS: dict = {}
+OPENMETEO_STATIONS: set = set()
+WU_STATIONS: set = set()
+STATION_API_KEYS: dict = {}        # station_id → WU API key
 CWOP_TO_STATION: dict = {}
 CWOP_CALLSIGNS: set = set()
+_stations_lock = threading.Lock()
+
+POLL_INTERVAL_SECONDS = 60
+STATION_REQUEST_GAP_SECONDS = 1
+INTEGRITY_SLOT_MINUTES = 60
+
+# ── APRS-IS / CWOP config ─────────────────────────────────────────────────────
 APRS_IS_HOST   = "rotate.aprs2.net"
 APRS_IS_PORT   = 14580
-# Range filter centred between the two CWOP stations (100 km radius).
-# The b/ budlist filter requires a verified ham-radio login; r/ + t/w does not.
 APRS_IS_FILTER = "t/w r/33.74/-88.14/100"
 
 
-def _rebuild_cwop_maps():
-    global CWOP_TO_STATION, CWOP_CALLSIGNS
-    CWOP_TO_STATION = {info["cwop_callsign"]: sid
-                       for sid, info in STATIONS.items() if info.get("cwop_callsign")}
-    CWOP_CALLSIGNS = set(CWOP_TO_STATION.keys())
+def seed_stations_if_needed():
+    """Insert default stations into the DB if the stations table is empty."""
+    db = SessionLocal()
+    try:
+        if db.query(Station).count() == 0:
+            for s in _DEFAULT_STATIONS:
+                db.add(Station(**s))
+            db.commit()
+            print(f"[stations] Seeded {len(_DEFAULT_STATIONS)} default stations")
+    finally:
+        db.close()
 
 
-def load_station_config():
-    """Read station_config.json and apply cwop_callsign overrides, then rebuild maps."""
-    if os.path.exists(STATION_CONFIG_PATH):
-        try:
-            with open(STATION_CONFIG_PATH) as f:
-                config = json.load(f)
-            for sid, overrides in config.items():
-                if sid in STATIONS and "cwop_callsign" in overrides:
-                    STATIONS[sid]["cwop_callsign"] = overrides["cwop_callsign"] or ""
-            print(f"[config] Loaded {STATION_CONFIG_PATH}")
-        except Exception as e:
-            print(f"[config] Failed to load {STATION_CONFIG_PATH}: {e}")
-    _rebuild_cwop_maps()
+def reload_stations():
+    """Read active stations from the DB and rebuild all in-memory maps."""
+    global STATIONS, OPENMETEO_STATIONS, WU_STATIONS, STATION_API_KEYS, CWOP_TO_STATION, CWOP_CALLSIGNS
+    db = SessionLocal()
+    try:
+        rows = db.query(Station).filter(Station.is_active == True).all()
+        new_stations = {}
+        new_openmeteo = set()
+        new_wu = set()
+        new_api_keys = {}
+        new_cwop_to_station = {}
+        for r in rows:
+            new_stations[r.station_id] = {
+                "name": r.name, "lat": r.lat, "lon": r.lon,
+                "cwop_callsign": r.cwop_callsign or "",
+            }
+            if r.source_type == "openmeteo":
+                new_openmeteo.add(r.station_id)
+            elif r.source_type == "wunderground":
+                new_wu.add(r.station_id)
+                if r.api_key:
+                    new_api_keys[r.station_id] = r.api_key
+            if r.cwop_callsign:
+                new_cwop_to_station[r.cwop_callsign] = r.station_id
+
+        with _stations_lock:
+            STATIONS = new_stations
+            OPENMETEO_STATIONS = new_openmeteo
+            WU_STATIONS = new_wu
+            STATION_API_KEYS = new_api_keys
+            CWOP_TO_STATION = new_cwop_to_station
+            CWOP_CALLSIGNS = set(new_cwop_to_station.keys())
+
+        print(f"[stations] Loaded {len(new_stations)} active station(s) from DB "
+              f"(openmeteo={len(new_openmeteo)}, wu={len(new_wu)}, cwop={len(new_cwop_to_station)})")
+    finally:
+        db.close()
 
 
-load_station_config()
-
-
-def update_cwop_link(station_id: str, cwop_callsign: str):
-    """Change or clear the CWOP callsign link for a station, and persist to JSON."""
-    if station_id not in STATIONS:
-        return
-    cs = (cwop_callsign or "").strip().upper()
-    STATIONS[station_id]["cwop_callsign"] = cs
-    _rebuild_cwop_maps()
-    config = {}
-    if os.path.exists(STATION_CONFIG_PATH):
-        try:
-            with open(STATION_CONFIG_PATH) as f:
-                config = json.load(f)
-        except Exception:
-            pass
-    if station_id not in config:
-        config[station_id] = {}
-    config[station_id]["cwop_callsign"] = cs
-    with open(STATION_CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
-    print(f"[config] {station_id} cwop_callsign = '{cs}'")
+# Initialize on import so that STATIONS is populated before main.py starts
+seed_stations_if_needed()
+reload_stations()
 
 
 def _utcnow_naive():
@@ -193,8 +204,10 @@ def aprs_listener_loop():
     Filters arriving packets client-side to CWOP_CALLSIGNS only.
     Auto-reconnects on any error.
     """
-    if not CWOP_CALLSIGNS:
-        return
+    with _stations_lock:
+        if not CWOP_CALLSIGNS:
+            print("[APRS-IS] No CWOP callsigns configured — listener not started")
+            return
 
     while True:
         sock = None
@@ -311,6 +324,107 @@ def _open_meteo_history_url(lat, lon, day):
         "&precipitation_unit=inch"
         "&timezone=UTC"
     )
+
+
+# ── Weather Underground PWS API helpers ──────────────────────────────────────
+_WU_BASE = "https://api.weather.com/v2/pws"
+
+
+def _wu_current_url(station_id, api_key):
+    return (
+        f"{_WU_BASE}/observations/current"
+        f"?stationId={station_id}&format=json&units=e&apiKey={api_key}"
+    )
+
+
+def _wu_history_url(station_id, day, api_key):
+    """day: YYYYMMDD string"""
+    return (
+        f"{_WU_BASE}/history/hourly"
+        f"?stationId={station_id}&date={day}&format=json&units=e&apiKey={api_key}"
+    )
+
+
+def fetch_current_weather_wu(station_id, api_key):
+    """Fetch the current observation for a WU PWS station."""
+    sid = station_id.upper()
+    if not api_key:
+        print(f"[WU] No API key for {sid} — skipping")
+        return None
+    url = _wu_current_url(sid, api_key)
+    try:
+        data = _http_get_json(url, timeout=20, attempts=3, backoff=1.7)
+        obs_list = data.get("observations", [])
+        if not obs_list:
+            return None
+        obs = obs_list[0]
+        imp = obs.get("imperial", {})
+        return {
+            "station_id":      sid,
+            "timestamp":       _utcnow_naive(),
+            "temperature":     imp.get("temp"),
+            "humidity":        obs.get("humidity"),
+            "dew_point":       imp.get("dewpt"),
+            "heat_index":      imp.get("heatIndex"),
+            "wind_chill":      imp.get("windChill"),
+            "wind_speed":      imp.get("windSpeed"),
+            "wind_dir":        obs.get("winddir"),
+            "wind_gust":       imp.get("windGust"),
+            "pressure":        imp.get("pressure"),    # already inHg
+            "precip_rate":     imp.get("precipRate"),
+            "precip_total":    imp.get("precipTotal"),
+            "solar_radiation": obs.get("solarRadiation"),
+            "uv_index":        obs.get("uv"),
+        }
+    except Exception as e:
+        print(f"[WU] Error fetching current for {sid}: {e}")
+    return None
+
+
+def fetch_historical_weather_wu(station_id, date_str, api_key):
+    """
+    Fetch hourly history for a WU PWS station for a given day (YYYYMMDD or YYYY-MM-DD).
+    Returns a list of standardised weather record dicts.
+    """
+    sid = station_id.upper()
+    if not api_key:
+        return []
+    if len(date_str) == 10:             # YYYY-MM-DD → YYYYMMDD
+        date_str = date_str.replace("-", "")
+    url = _wu_history_url(sid, date_str, api_key)
+    records = []
+    try:
+        data = _http_get_json(url, timeout=25, attempts=3, backoff=1.8)
+        for obs in data.get("observations", []):
+            try:
+                ts_str = obs.get("obsTimeUtc", "")
+                timestamp = datetime.datetime.fromisoformat(
+                    ts_str.replace("Z", "+00:00")
+                ).replace(tzinfo=None)
+            except Exception:
+                continue
+            imp = obs.get("imperial", {})
+            records.append({
+                "station_id":      sid,
+                "timestamp":       timestamp,
+                "temperature":     imp.get("temp"),
+                "humidity":        obs.get("humidityAvg", obs.get("humidity")),
+                "dew_point":       imp.get("dewpt"),
+                "heat_index":      imp.get("heatIndex"),
+                "wind_chill":      imp.get("windChill"),
+                "wind_speed":      imp.get("windspeedAvg", imp.get("windSpeed")),
+                "wind_dir":        obs.get("winddirAvg", obs.get("winddir")),
+                "wind_gust":       imp.get("windgustHigh", imp.get("windGust")),
+                "pressure":        imp.get("pressureMax", imp.get("pressure")),
+                "precip_rate":     imp.get("precipRate"),
+                "precip_total":    imp.get("precipTotal"),
+                "solar_radiation": obs.get("solarRadiationHigh", obs.get("solarRadiation")),
+                "uv_index":        obs.get("uvHigh", obs.get("uv")),
+            })
+    except Exception as e:
+        print(f"[WU] Error fetching history for {sid} {date_str}: {e}")
+    return records
+
 
 def fetch_current_weather(station_id):
     sid, info = _normalize_station(station_id)
@@ -561,7 +675,15 @@ def repair_integrity(days=5):
                       f"{sorted(missing_dates)}")
                 for date_str in sorted(missing_dates):
                     print(f"[integrity] {station_id}: fetching history for {date_str}...")
-                    records = fetch_historical_weather(station_id, date_str)
+                    with _stations_lock:
+                        src = "wunderground" if station_id in WU_STATIONS else "openmeteo"
+                        api_key = STATION_API_KEYS.get(station_id, "")
+                    if src == "wunderground":
+                        records = fetch_historical_weather_wu(station_id, date_str, api_key)
+                    elif src == "openmeteo":
+                        records = fetch_historical_weather(station_id, date_str)
+                    else:
+                        records = []
                     for rec in records:
                         save_weather_record(db, rec)
                     station_summary["dates_backfilled"].append(date_str)
@@ -581,7 +703,13 @@ def poll_loop():
     db = SessionLocal()
     try:
         while True:
-            for station_id in OPENMETEO_STATIONS:
+            with _stations_lock:
+                openmeteo_poll = set(OPENMETEO_STATIONS)
+                wu_poll = set(WU_STATIONS)
+                api_keys_snap = dict(STATION_API_KEYS)
+
+            # ── Open-Meteo stations ──────────────────────────────────────────
+            for station_id in openmeteo_poll:
                 try:
                     record_data = fetch_current_weather(station_id)
                     if record_data:
@@ -592,6 +720,21 @@ def poll_loop():
                 except Exception as e:
                     print(f"[poll] Error for {station_id}: {e}")
                 time.sleep(STATION_REQUEST_GAP_SECONDS)
+
+            # ── Weather Underground PWS stations ─────────────────────────────
+            for station_id in wu_poll:
+                try:
+                    api_key = api_keys_snap.get(station_id, "")
+                    record_data = fetch_current_weather_wu(station_id, api_key)
+                    if record_data:
+                        save_weather_record(db, record_data)
+                        print(f"[WU poll] {station_id}: {record_data['temperature']}°F  "
+                              f"hum={record_data['humidity']}%  "
+                              f"pres={record_data['pressure']} inHg")
+                except Exception as e:
+                    print(f"[WU poll] Error for {station_id}: {e}")
+                time.sleep(STATION_REQUEST_GAP_SECONDS)
+
             time.sleep(POLL_INTERVAL_SECONDS)
     finally:
         db.close()

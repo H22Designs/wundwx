@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Admin — WunDWX{% endblock %}
+{% block logo_text %}Admin Panel{% endblock %}
+{% block main_class %}style="max-width:1000px;"{% endblock %}
+
+{% block header_center %}
+{% if current_user and current_user.is_admin %}
+<div class="admin-tabs">
+    <button class="admin-tab active" id="tab-users">Users</button>
+    <button class="admin-tab" id="tab-stations">Stations</button>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block modals %}
+{% if current_user and current_user.is_admin %}
+<div class="modal-overlay" id="modal-overlay" style="display:none;">
+    <div class="modal-card" id="modal-card">
+        <div class="modal-header">
+            <h3 id="modal-title">Create</h3>
+            <button class="settings-close" id="modal-close">&times;</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+    {% if current_user and current_user.is_admin %}
+
+        <!-- Users Panel -->
+        <section id="panel-users">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+                <h2 class="panel-section-title" style="margin:0;">Users</h2>
+                <button class="panel-btn panel-btn-primary" id="btn-create-user">+ New User</button>
+            </div>
+            <div class="table-wrap">
+                <table class="wx-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th><th>Username</th><th>Email</th>
+                            <th>Admin</th><th>Active</th><th>Created</th>
+                            <th>Last Login</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-tbody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Stations Panel -->
+        <section id="panel-stations" style="display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+                <h2 class="panel-section-title" style="margin:0;">Stations</h2>
+                <button class="panel-btn panel-btn-primary" id="btn-create-station">+ New Station</button>
+            </div>
+            <div class="table-wrap">
+                <table class="wx-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th><th>Station ID</th><th>Name</th>
+                            <th>Lat</th><th>Lon</th><th>CWOP</th>
+                            <th>Source</th><th>Active</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stations-tbody"></tbody>
+                </table>
+            </div>
+        </section>
+
+    {% else %}
+        <div class="no-data">
+            <div class="no-data-icon">🚫</div>
+            <h2>Access Denied</h2>
+            <p>Admin privileges are required. <a href="/login" style="color:var(--accent);">Login</a></p>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if current_user and current_user.is_admin %}
+<script src="/static/js/admin_panel.js"></script>
+{% endif %}
+{% endblock %}

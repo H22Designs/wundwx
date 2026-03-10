@@ -7,7 +7,8 @@ Chart.defaults.font.size = 11;
 
 // ── State ────────────────────────────────────────────────────────────────────
 const charts = {};
-let currentStation = "KALMILLP10";
+let currentStation = (typeof window.__DEFAULT_STATION__ !== "undefined" && window.__DEFAULT_STATION__)
+    ? window.__DEFAULT_STATION__ : "KALMILLP10";
 let currentHours = 24;
 let customStart = null;
 let customEnd = null;
@@ -606,9 +607,27 @@ function updateSourceRow() {
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
-loadSettings();
-initSettings();
-initCwopInput();
-initStationTabs();
-fetchAll();
-restartRefreshTimer();
+// The user menu is already wired by auth.js at parse time (server-rendered HTML).
+// We only need checkAuth() to get the user object for settings merging.
+async function initApp() {
+    loadSettings();
+
+    // Merge server-side user settings if logged in (temp unit, refresh, station)
+    const user = await checkAuth();
+    if (user) {
+        try {
+            const ss = await fetch("/api/user/settings").then(r => r.json());
+            // Station is already set server-side via __DEFAULT_STATION__; only
+            // override if localStorage has a more recent selection saved.
+            if (ss.temp_unit) useCelsius = ss.temp_unit === "c";
+            if (ss.refresh_interval) refreshMs = ss.refresh_interval * 1000;
+        } catch (e) { }
+    }
+
+    initSettings();
+    initCwopInput();
+    initStationTabs();
+    fetchAll();
+    restartRefreshTimer();
+}
+initApp();

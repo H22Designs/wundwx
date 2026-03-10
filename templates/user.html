@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Settings — WunDWX{% endblock %}
+{% block logo_text %}User Settings{% endblock %}
+{% block main_class %}style="max-width:800px;"{% endblock %}
+
+{% block content %}
+    <div id="settings-content" {% if not current_user %}style="display:none;"{% endif %}>
+
+        <!-- Account Section -->
+        <section class="panel-section">
+            <h2 class="panel-section-title">Account</h2>
+            <div class="panel-card">
+                <div class="panel-row">
+                    <label>Username</label>
+                    <span class="panel-value">{% if current_user %}{{ current_user.username }}{% else %}—{% endif %}</span>
+                </div>
+                <div class="panel-row">
+                    <label>Email</label>
+                    <span class="panel-value">{% if current_user %}{{ current_user.email }}{% else %}—{% endif %}</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Change Password -->
+        <section class="panel-section">
+            <h2 class="panel-section-title">Change Password</h2>
+            <div class="panel-card">
+                <form id="pw-form" class="panel-form">
+                    <div class="auth-field">
+                        <label for="pw-current">Current Password</label>
+                        <input type="password" id="pw-current" required autocomplete="current-password" class="setting-input" />
+                    </div>
+                    <div class="auth-field">
+                        <label for="pw-new">New Password</label>
+                        <input type="password" id="pw-new" required minlength="4" autocomplete="new-password" class="setting-input" />
+                    </div>
+                    <div class="auth-field">
+                        <label for="pw-confirm">Confirm New Password</label>
+                        <input type="password" id="pw-confirm" required minlength="4" autocomplete="new-password" class="setting-input" />
+                    </div>
+                    <div class="panel-form-actions">
+                        <button type="submit" class="panel-btn panel-btn-primary">Update Password</button>
+                        <span id="pw-msg" class="panel-msg"></span>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- Dashboard Preferences -->
+        <section class="panel-section">
+            <h2 class="panel-section-title">Dashboard Preferences</h2>
+            <div class="panel-card">
+                <div class="panel-row">
+                    <label for="pref-station">Default Station</label>
+                    <select id="pref-station" class="setting-select" style="width:auto;min-width:180px;"></select>
+                </div>
+                <div class="panel-row">
+                    <label for="pref-unit">Temperature Unit</label>
+                    <select id="pref-unit" class="setting-select" style="width:auto;min-width:180px;">
+                        <option value="f">Fahrenheit</option>
+                        <option value="c">Celsius</option>
+                    </select>
+                </div>
+                <div class="panel-row">
+                    <label for="pref-refresh">Refresh Interval</label>
+                    <select id="pref-refresh" class="setting-select" style="width:auto;min-width:180px;">
+                        <option value="15">15 seconds</option>
+                        <option value="30">30 seconds</option>
+                        <option value="60">1 minute</option>
+                        <option value="120">2 minutes</option>
+                        <option value="300">5 minutes</option>
+                    </select>
+                </div>
+                <div class="panel-form-actions">
+                    <button id="save-prefs" class="panel-btn panel-btn-primary">Save Preferences</button>
+                    <span id="prefs-msg" class="panel-msg"></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Favorite Stations -->
+        <section class="panel-section">
+            <h2 class="panel-section-title">Favorite Stations</h2>
+            <div class="panel-card">
+                <div id="fav-list" class="fav-list"></div>
+                <div style="display:flex; gap:.5rem; margin-top:.75rem;">
+                    <select id="fav-add-select" class="setting-select" style="width:auto;flex:1;"></select>
+                    <button id="fav-add-btn" class="panel-btn panel-btn-primary">Add</button>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    {% if not current_user %}
+    <div class="no-data">
+        <div class="no-data-icon">🔒</div>
+        <h2>Login Required</h2>
+        <p>Please <a href="/login" style="color:var(--accent);">login</a> to access settings.</p>
+    </div>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if current_user %}
+<script src="/static/js/user_panel.js"></script>
+{% endif %}
+{% endblock %}

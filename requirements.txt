@@ -1,6 +1,10 @@
 fastapi
+jinja2
 uvicorn
 requests
 sqlalchemy
 pydantic
 rich
+python-jose[cryptography]
+bcrypt
+python-multipart

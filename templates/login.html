@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Login — WunDWX{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{# Login page has no standard header or footer #}
+{% block header %}{% endblock %}
+{% block footer %}{% endblock %}
+
+{% block content %}
+    <div class="auth-container">
+        <div class="auth-card">
+            <a href="/" class="auth-logo">
+                <div class="wx-logo-icon">🌦️</div>
+                <span>WunDWX</span>
+            </a>
+
+            <div class="auth-tabs">
+                <button class="auth-tab active" id="tab-login">Login</button>
+                <button class="auth-tab" id="tab-register">Register</button>
+            </div>
+
+            <div class="auth-error" id="auth-error" style="display:none;"></div>
+
+            <!-- Login Form -->
+            <form id="login-form" class="auth-form">
+                <div class="auth-field">
+                    <label for="login-username">Username</label>
+                    <input type="text" id="login-username" required autocomplete="username" />
+                </div>
+                <div class="auth-field">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" required autocomplete="current-password" />
+                </div>
+                <button type="submit" class="auth-submit">Sign In</button>
+            </form>
+
+            <!-- Register Form -->
+            <form id="register-form" class="auth-form" style="display:none;">
+                <div class="auth-field">
+                    <label for="reg-username">Username</label>
+                    <input type="text" id="reg-username" required autocomplete="username" />
+                </div>
+                <div class="auth-field">
+                    <label for="reg-email">Email</label>
+                    <input type="email" id="reg-email" required autocomplete="email" />
+                </div>
+                <div class="auth-field">
+                    <label for="reg-password">Password</label>
+                    <input type="password" id="reg-password" required minlength="4" autocomplete="new-password" />
+                </div>
+                <div class="auth-field">
+                    <label for="reg-confirm">Confirm Password</label>
+                    <input type="password" id="reg-confirm" required minlength="4" autocomplete="new-password" />
+                </div>
+                <button type="submit" class="auth-submit">Create Account</button>
+            </form>
+
+            <div class="auth-footer">
+                <a href="/">Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const showError = msg => { const el = $("auth-error"); el.textContent = msg; el.style.display = ""; };
+const hideError = () => { $("auth-error").style.display = "none"; };
+
+$("tab-login").addEventListener("click", () => {
+    $("tab-login").classList.add("active");
+    $("tab-register").classList.remove("active");
+    $("login-form").style.display = "";
+    $("register-form").style.display = "none";
+    hideError();
+});
+$("tab-register").addEventListener("click", () => {
+    $("tab-register").classList.add("active");
+    $("tab-login").classList.remove("active");
+    $("register-form").style.display = "";
+    $("login-form").style.display = "none";
+    hideError();
+});
+
+$("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    hideError();
+    try {
+        const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                username: $("login-username").value,
+                password: $("login-password").value,
+            }),
+        });
+        if (res.ok) { window.location.href = "/"; }
+        else { const d = await res.json(); showError(d.detail || "Login failed"); }
+    } catch (err) { showError("Network error"); }
+});
+
+$("register-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    hideError();
+    if ($("reg-password").value !== $("reg-confirm").value) { showError("Passwords do not match"); return; }
+    try {
+        const res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                username: $("reg-username").value,
+                email: $("reg-email").value,
+                password: $("reg-password").value,
+            }),
+        });
+        if (res.ok) { window.location.href = "/"; }
+        else { const d = await res.json(); showError(d.detail || "Registration failed"); }
+    } catch (err) { showError("Network error"); }
+});
+</script>
+{% endblock %}
