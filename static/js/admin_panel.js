@@ -15,18 +15,15 @@ $("modal-close").addEventListener("click", closeModal);
 $("modal-overlay").addEventListener("click", (e) => { if (e.target === $("modal-overlay")) closeModal(); });
 
 // Tab switching
-$("tab-users").addEventListener("click", () => {
-    $("tab-users").classList.add("active");
-    $("tab-stations").classList.remove("active");
-    $("panel-users").style.display = "";
-    $("panel-stations").style.display = "none";
-});
-$("tab-stations").addEventListener("click", () => {
-    $("tab-stations").classList.add("active");
-    $("tab-users").classList.remove("active");
-    $("panel-stations").style.display = "";
-    $("panel-users").style.display = "none";
-});
+function switchTab(active) {
+    ["users", "stations", "database"].forEach(name => {
+        $(`tab-${name}`).classList.toggle("active", name === active);
+        $(`panel-${name}`).style.display = name === active ? "" : "none";
+    });
+}
+$("tab-users").addEventListener("click", () => switchTab("users"));
+$("tab-stations").addEventListener("click", () => switchTab("stations"));
+$("tab-database").addEventListener("click", () => { switchTab("database"); loadDbStats(); });
 
 async function loadUsers() {
     const tbody = $("users-tbody");
@@ -237,6 +234,149 @@ $("btn-create-station").addEventListener("click", () => {
     const sel = $("modal-body").querySelector("[name=source_type]");
     const apiKeyRow = $("modal-body").querySelector(".api-key-row");
     sel.addEventListener("change", () => { apiKeyRow.style.display = sel.value === "wunderground" ? "" : "none"; });
+});
+
+// ── Database Admin ─────────────────────────────────────────────────────────
+
+function formatBytes(b) {
+    if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+    return (b / 1048576).toFixed(1) + " MB";
+}
+
+function dbMsg(id, html, ok = true) {
+    $(id).innerHTML = `<div class="db-result ${ok ? "db-result-ok" : "db-result-err"}">${html}</div>`;
+}
+
+async function loadDbStats() {
+    $("db-summary").innerHTML = '<div class="db-loading">Loading…</div>';
+    try {
+        const data = await fetch("/api/admin/db/stats").then(r => r.json());
+        $("db-summary").innerHTML = `
+            <div class="db-stat-card"><span class="db-stat-val">${data.total_records.toLocaleString()}</span><span class="db-stat-lbl">Total Records</span></div>
+            <div class="db-stat-card"><span class="db-stat-val">${formatBytes(data.db_size_bytes)}</span><span class="db-stat-lbl">DB Size</span></div>
+            <div class="db-stat-card"><span class="db-stat-val">${data.stations.length}</span><span class="db-stat-lbl">Stations w/ Data</span></div>
+        `;
+        $("db-stats-tbody").innerHTML = data.stations.map(s => `<tr>
+            <td style="color:var(--accent);font-weight:600;">${s.station_id}</td>
+            <td>${s.record_count.toLocaleString()}</td>
+            <td>${s.oldest ? s.oldest.split("T")[0] : "—"}</td>
+            <td>${s.newest ? s.newest.split("T")[0] : "—"}</td>
+            <td>${s.corrupt_count > 0 ? `<span style="color:var(--red);">${s.corrupt_count}</span>` : "0"}</td>
+        </tr>`).join("");
+
+        // Populate station selectors for backfill / purge
+        const opts = data.stations.map(s => `<option value="${s.station_id}">${s.station_id}</option>`).join("");
+        $("backfill-station").innerHTML = opts;
+        $("purge-station").innerHTML = '<option value="">All Stations</option>' + opts;
+    } catch (e) {
+        $("db-summary").innerHTML = '<div class="db-result db-result-err">Error loading stats</div>';
+    }
+}
+
+$("btn-refresh-stats").addEventListener("click", loadDbStats);
+
+// Integrity check
+$("btn-check-integrity").addEventListener("click", async () => {
+    $("integrity-results").innerHTML = '<div class="db-loading">Running check…</div>';
+    try {
+        const data = await fetch("/api/integrity").then(r => r.json());
+        const entries = Object.entries(data);
+        if (!entries.length) {
+            $("integrity-results").innerHTML = '<div class="db-result db-result-ok">No stations to check.</div>';
+            return;
+        }
+        const allOk = entries.every(([, v]) => v.corrupt_count === 0 && v.missing_slot_count === 0);
+        $("integrity-results").innerHTML = entries.map(([sid, v]) => {
+            const ok = v.corrupt_count === 0 && v.missing_slot_count === 0;
+            const dates = v.missing_dates.length ? ` — missing dates: ${v.missing_dates.join(", ")}` : "";
+            return `<div class="db-integrity-row ${ok ? "db-result-ok" : "db-result-err"}">
+                <strong>${sid}</strong>: ${v.corrupt_count} corrupt, ${v.missing_slot_count} missing slots${dates}
+            </div>`;
+        }).join("") + (allOk ? '<div class="db-result db-result-ok" style="margin-top:.5rem;">All stations OK</div>' : "");
+    } catch (e) {
+        $("integrity-results").innerHTML = '<div class="db-result db-result-err">Error running integrity check</div>';
+    }
+});
+
+// Integrity repair
+$("btn-repair-integrity").addEventListener("click", async () => {
+    $("integrity-results").innerHTML = '<div class="db-loading">Repair started…</div>';
+    try {
+        const data = await fetch("/api/integrity/repair", { method: "POST" }).then(r => r.json());
+        dbMsg("integrity-results", data.message);
+    } catch (e) {
+        dbMsg("integrity-results", "Error starting repair", false);
+    }
+});
+
+// Backfill form
+$("backfill-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    $("backfill-results").innerHTML = '<div class="db-loading">Backfill started in background…</div>';
+    const res = await fetch("/api/admin/db/backfill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            station_id: fd.get("station_id"),
+            start_date: fd.get("start_date"),
+            end_date: fd.get("end_date"),
+        }),
+    });
+    const data = await res.json();
+    dbMsg("backfill-results", res.ok ? data.message : (data.detail || "Error"), res.ok);
+});
+
+// Import backup
+$("import-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!confirm(`Import "${file.name}" and restore this database? Current data will be replaced.`)) {
+        e.target.value = "";
+        return;
+    }
+    const formData = new FormData();
+    formData.append("file", file);
+    $("import-results").innerHTML = '<div class="db-loading">Uploading and restoring…</div>';
+    const res = await fetch("/api/admin/db/import", { method: "POST", body: formData });
+    const data = await res.json();
+    dbMsg("import-results", res.ok ? data.message : (data.detail || "Import failed"), res.ok);
+    if (res.ok) loadDbStats();
+    e.target.value = "";
+});
+
+// Purge form
+$("purge-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const station = fd.get("station_id");
+    const start = fd.get("start_date");
+    const end = fd.get("end_date");
+    const label = `${station || "ALL stations"}${start ? " from " + start : ""}${end ? " to " + end : ""}`;
+    if (!confirm(`Permanently delete records for ${label}? This cannot be undone.`)) return;
+    const body = {};
+    if (station) body.station_id = station;
+    if (start) body.start_date = start;
+    if (end) body.end_date = end;
+    const res = await fetch("/api/admin/db/purge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    dbMsg("purge-results", res.ok ? `Deleted ${data.deleted.toLocaleString()} record(s).` : (data.detail || "Error"), res.ok);
+    if (res.ok) loadDbStats();
+});
+
+// Rebuild
+$("btn-rebuild").addEventListener("click", async () => {
+    if (!confirm("Delete ALL weather records and rebuild? This cannot be undone.")) return;
+    if (!confirm("Final confirmation: ALL data will be permanently deleted before backfill starts.")) return;
+    $("rebuild-results").innerHTML = '<div class="db-loading">Rebuild started in background…</div>';
+    const res = await fetch("/api/admin/db/rebuild", { method: "POST" });
+    const data = await res.json();
+    dbMsg("rebuild-results", res.ok ? data.message : (data.detail || "Error"), res.ok);
+    if (res.ok) setTimeout(loadDbStats, 2000);
 });
 
 // Template only includes admin panel HTML when user is admin (server-side check).

@@ -9,6 +9,7 @@
 <div class="admin-tabs">
     <button class="admin-tab active" id="tab-users">Users</button>
     <button class="admin-tab" id="tab-stations">Stations</button>
+    <button class="admin-tab" id="tab-database">Database</button>
 </div>
 {% endif %}
 {% endblock %}
@@ -68,6 +69,105 @@
                     <tbody id="stations-tbody"></tbody>
                 </table>
             </div>
+        </section>
+
+        <!-- Database Panel -->
+        <section id="panel-database" style="display:none;">
+
+            <!-- Overview Stats -->
+            <div class="db-section">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.75rem;">
+                    <h2 class="panel-section-title" style="margin:0;">Database Overview</h2>
+                    <button class="panel-btn" id="btn-refresh-stats">↻ Refresh</button>
+                </div>
+                <div class="db-summary-row" id="db-summary"></div>
+                <div class="table-wrap" style="margin-top:.75rem;">
+                    <table class="wx-table">
+                        <thead><tr><th>Station</th><th>Records</th><th>Oldest</th><th>Newest</th><th>Corrupt</th></tr></thead>
+                        <tbody id="db-stats-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Integrity -->
+            <div class="db-section">
+                <h3 class="panel-section-title" style="margin-bottom:.75rem;">Integrity Check</h3>
+                <div style="display:flex; gap:.5rem; margin-bottom:.75rem; flex-wrap:wrap;">
+                    <button class="panel-btn panel-btn-primary" id="btn-check-integrity">Check Integrity</button>
+                    <button class="panel-btn" id="btn-repair-integrity">Repair Missing / Corrupt</button>
+                </div>
+                <div id="integrity-results"></div>
+            </div>
+
+            <!-- Backfill -->
+            <div class="db-section">
+                <h3 class="panel-section-title" style="margin-bottom:.75rem;">Backfill Historical Data</h3>
+                <form class="panel-form" id="backfill-form" style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:flex-end;">
+                    <div class="auth-field" style="flex:1; min-width:160px;">
+                        <label>Station</label>
+                        <select name="station_id" class="setting-select" id="backfill-station"></select>
+                    </div>
+                    <div class="auth-field" style="flex:1; min-width:140px;">
+                        <label>Start Date</label>
+                        <input type="date" name="start_date" class="setting-input" required />
+                    </div>
+                    <div class="auth-field" style="flex:1; min-width:140px;">
+                        <label>End Date</label>
+                        <input type="date" name="end_date" class="setting-input" required />
+                    </div>
+                    <button type="submit" class="panel-btn panel-btn-primary">Backfill</button>
+                </form>
+                <div id="backfill-results" style="margin-top:.5rem;"></div>
+            </div>
+
+            <!-- Backup & Restore -->
+            <div class="db-section">
+                <h3 class="panel-section-title" style="margin-bottom:.75rem;">Backup &amp; Restore</h3>
+                <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+                    <a href="/api/admin/db/backup" class="panel-btn panel-btn-primary" download>↓ Download Backup</a>
+                    <label class="panel-btn" style="cursor:pointer; margin:0;">
+                        ↑ Import Backup
+                        <input type="file" id="import-file" accept=".db,.sqlite,.sqlite3" style="display:none;" />
+                    </label>
+                </div>
+                <div id="import-results" style="margin-top:.5rem;"></div>
+            </div>
+
+            <!-- Danger Zone -->
+            <div class="db-section db-danger-zone">
+                <h3 class="panel-section-title" style="color:var(--red); margin-bottom:.75rem;">⚠ Danger Zone</h3>
+
+                <div style="margin-bottom:1.25rem;">
+                    <h4 style="margin-bottom:.5rem; font-size:.9rem;">Purge Records</h4>
+                    <p style="font-size:.8rem; color:var(--text-muted); margin-bottom:.5rem;">Permanently delete records matching the selected filters. All fields are optional.</p>
+                    <form class="panel-form" id="purge-form" style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:flex-end;">
+                        <div class="auth-field" style="flex:1; min-width:160px;">
+                            <label>Station (optional)</label>
+                            <select name="station_id" class="setting-select" id="purge-station">
+                                <option value="">All Stations</option>
+                            </select>
+                        </div>
+                        <div class="auth-field" style="flex:1; min-width:140px;">
+                            <label>Start Date (optional)</label>
+                            <input type="date" name="start_date" class="setting-input" />
+                        </div>
+                        <div class="auth-field" style="flex:1; min-width:140px;">
+                            <label>End Date (optional)</label>
+                            <input type="date" name="end_date" class="setting-input" />
+                        </div>
+                        <button type="submit" class="panel-btn panel-btn-danger">Purge</button>
+                    </form>
+                    <div id="purge-results" style="margin-top:.5rem;"></div>
+                </div>
+
+                <div>
+                    <h4 style="margin-bottom:.5rem; font-size:.9rem;">Rebuild Database</h4>
+                    <p style="font-size:.8rem; color:var(--text-muted); margin-bottom:.5rem;">Deletes <strong>all</strong> weather records, then backfills the last 5 days from external APIs. This cannot be undone.</p>
+                    <button class="panel-btn panel-btn-danger" id="btn-rebuild">⚠ Rebuild Database</button>
+                    <div id="rebuild-results" style="margin-top:.5rem;"></div>
+                </div>
+            </div>
+
         </section>
 
     {% else %}

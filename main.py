@@ -3,10 +3,15 @@ import threading
 import datetime
 from contextlib import asynccontextmanager
 from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Request, Response
+import io
+import os
+import shutil
+import sqlite3
+import tempfile
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Request, Response, UploadFile, File
 from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
@@ -459,6 +464,136 @@ def admin_delete_station(station_id: int, request: Request, db: Session = Depend
     db.commit()
     poller.reload_stations()
     return {"status": "ok", "detail": "Station deactivated"}
+
+
+# ── Admin Database ───────────────────────────────────────────────────────────
+
+@app.get("/api/admin/db/stats")
+def admin_db_stats(request: Request, db: Session = Depends(get_db)):
+    require_admin(request, db)
+    return poller.get_db_stats()
+
+
+class AdminDbBackfillRequest(BaseModel):
+    station_id: str
+    start_date: str   # YYYY-MM-DD
+    end_date: str     # YYYY-MM-DD
+
+
+@app.post("/api/admin/db/backfill")
+def admin_db_backfill(body: AdminDbBackfillRequest, background_tasks: BackgroundTasks,
+                      request: Request, db: Session = Depends(get_db)):
+    require_admin(request, db)
+    try:
+        datetime.date.fromisoformat(body.start_date)
+        datetime.date.fromisoformat(body.end_date)
+    except ValueError:
+        raise HTTPException(400, "Dates must be YYYY-MM-DD format")
+    background_tasks.add_task(
+        poller.backfill_station_date_range,
+        body.station_id.upper(), body.start_date, body.end_date,
+    )
+    return {"status": "started",
+            "message": f"Backfilling {body.station_id.upper()} from {body.start_date} to {body.end_date}"}
+
+
+class AdminDbPurgeRequest(BaseModel):
+    station_id: Optional[str] = None
+    start_date: Optional[str] = None   # YYYY-MM-DD inclusive
+    end_date: Optional[str] = None     # YYYY-MM-DD inclusive
+
+
+@app.post("/api/admin/db/purge")
+def admin_db_purge(body: AdminDbPurgeRequest, request: Request, db: Session = Depends(get_db)):
+    require_admin(request, db)
+    start_dt, end_dt = None, None
+    if body.start_date:
+        try:
+            start_dt = datetime.datetime.fromisoformat(body.start_date)
+        except ValueError:
+            raise HTTPException(400, "start_date must be YYYY-MM-DD")
+    if body.end_date:
+        try:
+            # Include the full end day
+            end_dt = datetime.datetime.fromisoformat(body.end_date) + datetime.timedelta(days=1)
+        except ValueError:
+            raise HTTPException(400, "end_date must be YYYY-MM-DD")
+    result = poller.purge_records(
+        station_id=body.station_id.upper() if body.station_id else None,
+        start_dt=start_dt,
+        end_dt=end_dt,
+    )
+    return result
+
+
+@app.post("/api/admin/db/rebuild")
+def admin_db_rebuild(background_tasks: BackgroundTasks, request: Request, db: Session = Depends(get_db)):
+    require_admin(request, db)
+    background_tasks.add_task(poller.rebuild_weather_records, 5)
+    return {"status": "started",
+            "message": "All weather records deleted. Backfilling last 5 days in background."}
+
+
+@app.get("/api/admin/db/backup")
+def admin_db_backup(request: Request, db: Session = Depends(get_db)):
+    require_admin(request, db)
+    # Use sqlite3 backup API for a consistent, WAL-safe snapshot
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    os.close(tmp_fd)
+    try:
+        src = sqlite3.connect("weather.db")
+        dst = sqlite3.connect(tmp_path)
+        src.backup(dst)
+        dst.close()
+        src.close()
+    except Exception as e:
+        os.unlink(tmp_path)
+        raise HTTPException(500, f"Backup failed: {e}")
+
+    def _stream():
+        try:
+            with open(tmp_path, "rb") as f:
+                while chunk := f.read(65536):
+                    yield chunk
+        finally:
+            os.unlink(tmp_path)
+
+    ts = _utcnow_naive().strftime("%Y%m%d_%H%M%S")
+    return StreamingResponse(
+        _stream(),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename=weather_backup_{ts}.db"},
+    )
+
+
+@app.post("/api/admin/db/import")
+async def admin_db_import(request: Request, file: UploadFile = File(...),
+                          db: Session = Depends(get_db)):
+    require_admin(request, db)
+    content = await file.read()
+    # Validate SQLite magic header
+    if len(content) < 16 or content[:16] != b"SQLite format 3\x00":
+        raise HTTPException(400, "File does not appear to be a valid SQLite database")
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    try:
+        with os.fdopen(tmp_fd, "wb") as f:
+            f.write(content)
+        # Restore via sqlite3 backup API (transaction-safe)
+        from database import engine as _engine
+        _engine.dispose()   # close all pooled connections before swapping
+        src = sqlite3.connect(tmp_path)
+        dst = sqlite3.connect("weather.db")
+        src.backup(dst)
+        dst.close()
+        src.close()
+    except Exception as e:
+        raise HTTPException(500, f"Import failed: {e}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    return {"status": "ok", "message": "Database restored successfully. Data will refresh on next poll."}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

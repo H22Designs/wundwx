@@ -696,6 +696,119 @@ def repair_integrity(days=5):
         db.close()
 
 
+def get_db_stats():
+    """Return per-station record counts, date ranges, corrupt counts, and DB file size."""
+    import os
+    from sqlalchemy import func as sa_func
+    db = SessionLocal()
+    try:
+        rows = db.query(
+            WeatherRecord.station_id,
+            sa_func.count(WeatherRecord.id).label("count"),
+            sa_func.min(WeatherRecord.timestamp).label("oldest"),
+            sa_func.max(WeatherRecord.timestamp).label("newest"),
+        ).group_by(WeatherRecord.station_id).all()
+
+        stations_stats = []
+        for row in rows:
+            corrupt = db.query(sa_func.count(WeatherRecord.id)).filter(
+                WeatherRecord.station_id == row.station_id,
+                WeatherRecord.temperature.is_(None),
+            ).scalar() or 0
+            stations_stats.append({
+                "station_id": row.station_id,
+                "record_count": row.count,
+                "oldest": row.oldest.isoformat() if row.oldest else None,
+                "newest": row.newest.isoformat() if row.newest else None,
+                "corrupt_count": corrupt,
+            })
+
+        db_size = os.path.getsize("weather.db") if os.path.exists("weather.db") else 0
+        return {
+            "db_size_bytes": db_size,
+            "total_records": sum(s["record_count"] for s in stations_stats),
+            "stations": stations_stats,
+        }
+    finally:
+        db.close()
+
+
+def backfill_station_date_range(station_id: str, start_date: str, end_date: str):
+    """Backfill a specific station from start_date to end_date (YYYY-MM-DD inclusive).
+    Returns a dict with filled_dates and errors."""
+    with _stations_lock:
+        if station_id not in STATIONS:
+            return {"error": f"Unknown station: {station_id}"}
+        is_openmeteo = station_id in OPENMETEO_STATIONS
+        is_wu = station_id in WU_STATIONS
+        api_key = STATION_API_KEYS.get(station_id)
+
+    if not is_openmeteo and not is_wu:
+        return {"error": f"Station {station_id} has no backfill source (CWOP stations cannot be backfilled)"}
+
+    start = datetime.date.fromisoformat(start_date)
+    end = datetime.date.fromisoformat(end_date)
+
+    filled, errors = [], []
+    db = SessionLocal()
+    try:
+        current = start
+        while current <= end:
+            date_str = current.strftime("%Y%m%d")
+            try:
+                if is_openmeteo:
+                    records = fetch_historical_weather(station_id, date_str)
+                else:
+                    records = fetch_historical_weather_wu(station_id, date_str, api_key)
+                for rec in records:
+                    save_weather_record(db, rec)
+                filled.append(date_str)
+                print(f"[backfill] {station_id} {date_str}: {len(records)} records")
+            except Exception as e:
+                errors.append({"date": date_str, "error": str(e)})
+                print(f"[backfill] {station_id} {date_str}: ERROR {e}")
+            current += datetime.timedelta(days=1)
+            time.sleep(1)
+    finally:
+        db.close()
+
+    return {"filled_dates": filled, "errors": errors}
+
+
+def purge_records(station_id: str = None, start_dt=None, end_dt=None):
+    """Delete weather records matching filters. Returns count of deleted records."""
+    db = SessionLocal()
+    try:
+        query = db.query(WeatherRecord)
+        if station_id:
+            query = query.filter(WeatherRecord.station_id == station_id)
+        if start_dt:
+            query = query.filter(WeatherRecord.timestamp >= start_dt)
+        if end_dt:
+            query = query.filter(WeatherRecord.timestamp <= end_dt)
+        count = query.count()
+        query.delete(synchronize_session=False)
+        db.commit()
+        print(f"[purge] Deleted {count} records (station={station_id}, start={start_dt}, end={end_dt})")
+        return {"deleted": count}
+    finally:
+        db.close()
+
+
+def rebuild_weather_records(days: int = 5):
+    """Delete all weather records then trigger a full integrity repair/backfill."""
+    db = SessionLocal()
+    try:
+        count = db.query(WeatherRecord).count()
+        db.query(WeatherRecord).delete(synchronize_session=False)
+        db.commit()
+        print(f"[rebuild] Deleted all {count} weather records. Starting backfill…")
+    finally:
+        db.close()
+    repair_integrity(days)
+    print("[rebuild] Complete.")
+
+
 def poll_loop():
     threading.Thread(target=repair_integrity, args=(5,), daemon=True).start()
     threading.Thread(target=aprs_listener_loop, daemon=True).start()
