@@ -12,3 +12,6 @@ weather.db
 *.log
 static/js/*.map
 station_config.json
+secret.key
+weather.db-shm
+weather.db-wal
