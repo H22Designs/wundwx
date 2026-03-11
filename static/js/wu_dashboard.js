@@ -497,6 +497,8 @@ function renderDailyTable(days) {
 
 // ── Fetch all ─────────────────────────────────────────────────────────────────
 async function fetchAll() {
+    const dashEl = $("dashboard-state");
+    if (dashEl) { dashEl.style.opacity = "0.4"; dashEl.style.pointerEvents = "none"; }
     try {
         const s = currentStation;
         let [current, history, daily, alerts, nearby] = await Promise.all([
@@ -538,6 +540,8 @@ async function fetchAll() {
         renderNearby(nearby);
     } catch (e) {
         console.warn("Fetch error:", e);
+    } finally {
+        if (dashEl) { dashEl.style.opacity = ""; dashEl.style.pointerEvents = ""; }
     }
 }
 

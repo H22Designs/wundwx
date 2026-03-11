@@ -319,6 +319,7 @@ def _open_meteo_history_url(lat, lon, day):
         "&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,"
         "wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,"
         "shortwave_radiation,uv_index"
+        "&daily=precipitation_sum"
         "&temperature_unit=fahrenheit"
         "&wind_speed_unit=mph"
         "&precipitation_unit=inch"
@@ -423,7 +424,7 @@ def fetch_historical_weather_wu(station_id, date_str, api_key):
             })
     except Exception as e:
         print(f"[WU] Error fetching history for {sid} {date_str}: {e}")
-    return records
+    return _expand_hourly_to_5min(records)
 
 
 def fetch_current_weather(station_id):
@@ -462,6 +463,50 @@ def fetch_current_weather(station_id):
         print(f"Error fetching current weather for {sid or station_id}: {e}")
     return None
 
+_INTERP_FIELDS = [
+    "temperature", "humidity", "dew_point", "heat_index", "wind_chill",
+    "wind_speed", "wind_gust", "pressure", "solar_radiation", "uv_index",
+    "precip_total",
+]
+_COPY_FIELDS = ["station_id", "wind_dir", "precip_rate"]
+_HISTORY_INTERVAL_MINUTES = 5
+
+
+def _expand_hourly_to_5min(records):
+    """
+    Expand a list of hourly weather record dicts into 5-minute interval records
+    using linear interpolation for smooth fields.  Wind direction and precip
+    rate are copied unchanged from each hourly record.
+    """
+    if not records:
+        return records
+
+    steps = 60 // _HISTORY_INTERVAL_MINUTES  # 12 sub-records per hour
+    expanded = []
+
+    for i, rec in enumerate(records):
+        next_rec = records[i + 1] if i + 1 < len(records) else None
+        for step in range(steps):
+            frac = step / steps
+            ts = rec["timestamp"] + datetime.timedelta(minutes=step * _HISTORY_INTERVAL_MINUTES)
+            sub = {"timestamp": ts}
+
+            for field in _INTERP_FIELDS:
+                v0 = rec.get(field)
+                if next_rec is not None and v0 is not None:
+                    v1 = next_rec.get(field)
+                    sub[field] = round(v0 + frac * (v1 - v0), 4) if v1 is not None else v0
+                else:
+                    sub[field] = v0
+
+            for field in _COPY_FIELDS:
+                sub[field] = rec.get(field)
+
+            expanded.append(sub)
+
+    return expanded
+
+
 def fetch_historical_weather(station_id, date_str):
     sid, info = _normalize_station(station_id)
     if not info:
@@ -476,6 +521,8 @@ def fetch_historical_weather(station_id, date_str):
     records = []
     try:
         data = _http_get_json(url, timeout=25, attempts=3, backoff=1.8)
+        daily_sums = data.get("daily", {}).get("precipitation_sum", [])
+        daily_precip_total = daily_sums[0] if daily_sums else None
         hourly = data.get("hourly", {})
         times = hourly.get("time", [])
         for i, ts in enumerate(times):
@@ -501,13 +548,13 @@ def fetch_historical_weather(station_id, date_str):
                 "wind_gust": hv("wind_gusts_10m"),
                 "pressure": _hpa_to_inhg(hv("surface_pressure")),
                 "precip_rate": hv("precipitation"),
-                "precip_total": hv("precipitation"),
+                "precip_total": daily_precip_total,
                 "solar_radiation": hv("shortwave_radiation"),
                 "uv_index": hv("uv_index"),
             })
     except Exception as e:
         print(f"Error fetching historical weather for {sid or station_id} {date_str}: {e}")
-    return records
+    return _expand_hourly_to_5min(records)
 
 
 def save_weather_record(db: Session, record_data: dict):
@@ -603,6 +650,11 @@ def check_integrity(days=5):
                 if slot not in covered:
                     missing.append(slot)
                 slot += datetime.timedelta(minutes=INTEGRITY_SLOT_MINUTES)
+
+            # Exclude today — archive API can't backfill it, and the live poller
+            # will naturally fill it in over time.
+            today_str = now.strftime("%Y%m%d")
+            missing = [s for s in missing if s.strftime("%Y%m%d") != today_str]
 
             report[station_id] = {
                 "corrupt_count": corrupt_count,

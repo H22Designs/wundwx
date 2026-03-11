@@ -645,8 +645,22 @@ def get_weather_history(
         cutoff = _utcnow_naive() - datetime.timedelta(hours=hours)
         query = query.filter(WeatherRecord.timestamp >= cutoff)
 
-    records = query.order_by(WeatherRecord.timestamp.desc()).limit(limit).all()
-    records = list(reversed(records))
+    records = query.order_by(WeatherRecord.timestamp).all()
+
+    # Downsample to 5-minute intervals: keep the last record within each slot
+    INTERVAL_MINUTES = 5
+    buckets: dict = {}
+    for r in records:
+        if r.timestamp is None:
+            continue
+        slot_min = (r.timestamp.minute // INTERVAL_MINUTES) * INTERVAL_MINUTES
+        slot = r.timestamp.replace(minute=slot_min, second=0, microsecond=0)
+        buckets[slot] = r
+
+    sampled = [buckets[k] for k in sorted(buckets.keys())]
+    if limit:
+        sampled = sampled[-limit:]
+
     return [{
         "obs_time_utc": r.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if r.timestamp is not None else None,
         "temp_f": r.temperature,
@@ -662,7 +676,7 @@ def get_weather_history(
         "precip_total_in": r.precip_total,
         "solar_radiation_wm2": r.solar_radiation,
         "uv_index": r.uv_index,
-    } for r in records]
+    } for r in sampled]
 
 
 @app.get("/api/today")
@@ -764,7 +778,7 @@ def get_nws_alerts(station: str = DEFAULT_STATION, db: Session = Depends(get_db)
 
 
 @app.get("/api/nearby")
-def get_nearby_stations(station: str = DEFAULT_STATION):
+def get_nearby_stations(station: str = DEFAULT_STATION, db: Session = Depends(get_db)):
     selected = station.upper()
     nearby = []
     with poller._stations_lock:
@@ -772,15 +786,20 @@ def get_nearby_stations(station: str = DEFAULT_STATION):
     for station_id, info in stations_copy.items():
         if station_id == selected:
             continue
-        current = poller.fetch_current_weather(station_id)
+        record = (
+            db.query(WeatherRecord)
+            .filter(WeatherRecord.station_id == station_id)
+            .order_by(desc(WeatherRecord.timestamp))
+            .first()
+        )
         nearby.append({
             "stationID": station_id,
             "neighborhood": info.get("name"),
             "lat": info.get("lat"),
             "lon": info.get("lon"),
-            "temp_f": current.get("temperature") if current else None,
-            "humidity": current.get("humidity") if current else None,
-            "wind_speed": current.get("wind_speed") if current else None,
+            "temp_f": record.temperature if record else None,
+            "humidity": record.humidity if record else None,
+            "wind_speed": record.wind_speed if record else None,
         })
     return nearby
 
