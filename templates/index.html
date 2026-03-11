@@ -90,6 +90,13 @@
                         Links APRS/CWOP live data to this station. Press Enter or click away to save.
                     </div>
                 </div>
+                <div class="setting-group">
+                    <label class="setting-label">Layout</label>
+                    <div style="font-size:.72rem; color:var(--text-dim); margin-bottom:.5rem;">
+                        Drag cards by their <strong style="color:var(--text-muted);">⠿</strong> handle to reorder.
+                    </div>
+                    <button class="panel-btn" id="reset-layout" style="width:100%;">↺ Reset Card Order</button>
+                </div>
             </div>
         </div>
     </div>
@@ -172,11 +179,14 @@
         </div>
 
         <!-- ── Metrics Grid ──────────────────────────────────────────────── -->
+        <div class="metrics-period-bar">
+            Period stats reflect: <span id="metrics-range-label" class="metrics-period-val">24h</span>
+        </div>
         <div class="metrics-grid">
 
             <!-- Wind -->
             <div class="metric-card" data-card-id="wind">
-                <div class="metric-header"><span class="metric-label">Wind</span><span class="metric-icon">💨</span></div>
+                <div class="metric-header"><span class="drag-handle" title="Drag to reorder">⠿</span><span class="metric-label">Wind</span><span class="metric-icon">💨</span></div>
                 <div class="compass-wrap">
                     <div class="compass">
                         <span class="compass-label compass-n">N</span>
@@ -205,7 +215,7 @@
 
             <!-- Humidity -->
             <div class="metric-card" data-card-id="humidity">
-                <div class="metric-header"><span class="metric-label">Humidity</span><span class="metric-icon">💧</span></div>
+                <div class="metric-header"><span class="drag-handle" title="Drag to reorder">⠿</span><span class="metric-label">Humidity</span><span class="metric-icon">💧</span></div>
                 <span id="hum-val2" class="metric-value text-accent">—</span>
                 <div class="gauge-bar-wrap" style="margin-top:.5rem;">
                     <div class="gauge-bar-track">
@@ -221,7 +231,7 @@
 
             <!-- Pressure -->
             <div class="metric-card" data-card-id="pressure">
-                <div class="metric-header"><span class="metric-label">Barometric Pressure</span><span class="metric-icon">🌡️</span></div>
+                <div class="metric-header"><span class="drag-handle" title="Drag to reorder">⠿</span><span class="metric-label">Barometric Pressure</span><span class="metric-icon">🌡️</span></div>
                 <div style="display:flex; align-items:baseline; gap:.4rem;">
                     <span id="baro-val" class="metric-value text-green">—</span>
                     <span class="metric-unit">inHg</span>
@@ -236,7 +246,7 @@
 
             <!-- Rain -->
             <div class="metric-card" data-card-id="rain">
-                <div class="metric-header"><span class="metric-label">Precipitation</span><span class="metric-icon">🌧️</span></div>
+                <div class="metric-header"><span class="drag-handle" title="Drag to reorder">⠿</span><span class="metric-label">Precipitation</span><span class="metric-icon">🌧️</span></div>
                 <div style="display:flex; align-items:baseline; gap:.3rem;">
                     <span id="rain-daily" class="metric-value text-accent">—</span>
                     <span class="metric-unit">in today</span>
@@ -249,7 +259,7 @@
 
             <!-- UV Index -->
             <div class="metric-card" data-card-id="uv">
-                <div class="metric-header"><span class="metric-label">UV Index</span><span class="metric-icon">☀️</span></div>
+                <div class="metric-header"><span class="drag-handle" title="Drag to reorder">⠿</span><span class="metric-label">UV Index</span><span class="metric-icon">☀️</span></div>
                 <span id="uv-val" class="metric-value text-muted">—</span>
                 <div id="uv-label" style="font-size:.8rem; color:var(--text-muted); margin-top:.25rem;"></div>
                 <div style="margin-top:.5rem;">
@@ -278,7 +288,7 @@
 
             <!-- Dew Point -->
             <div class="metric-card" data-card-id="dewpoint">
-                <div class="metric-header"><span class="metric-label">Dew Point</span><span class="metric-icon">🌫️</span></div>
+                <div class="metric-header"><span class="drag-handle" title="Drag to reorder">⠿</span><span class="metric-label">Dew Point</span><span class="metric-icon">🌫️</span></div>
                 <div style="display:flex; align-items:baseline; gap:.3rem;">
                     <span id="dewpt-val" class="metric-value text-accent">—</span>
                     <span class="metric-unit">°F</span>
@@ -292,7 +302,7 @@
 
             <!-- Feels Like -->
             <div class="metric-card" data-card-id="feelslike">
-                <div class="metric-header"><span class="metric-label">Feels Like</span><span class="metric-icon">🌡️</span></div>
+                <div class="metric-header"><span class="drag-handle" title="Drag to reorder">⠿</span><span class="metric-label">Feels Like</span><span class="metric-icon">🌡️</span></div>
                 <div style="display:flex; align-items:baseline; gap:.3rem;">
                     <span id="feelslike-val" class="metric-value">—</span>
                     <span class="metric-unit">°F</span>
@@ -305,7 +315,7 @@
 
             <!-- Station Info -->
             <div class="metric-card" data-card-id="station">
-                <div class="metric-header"><span class="metric-label">Station Info</span><span class="metric-icon">📡</span></div>
+                <div class="metric-header"><span class="drag-handle" title="Drag to reorder">⠿</span><span class="metric-label">Station Info</span><span class="metric-icon">📡</span></div>
                 <div id="station-id-display"
                     style="font-size:1.4rem; font-weight:700; color:var(--accent); letter-spacing:.02em;">—</div>
                 <div class="metric-sub">
@@ -340,35 +350,35 @@
 
             <div class="charts-grid" style="margin-top:1rem;">
                 <div class="chart-card wide" data-chart-id="chart-temp">
-                    <div class="chart-title">Temperature, Dew Point &amp; Heat Index</div>
+                    <div class="chart-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Temperature, Dew Point &amp; Heat Index</div>
                     <div class="chart-wrap"><canvas id="chart-temp"></canvas></div>
                 </div>
                 <div class="chart-card" data-chart-id="chart-hum">
-                    <div class="chart-title">Relative Humidity</div>
+                    <div class="chart-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Relative Humidity</div>
                     <div class="chart-wrap"><canvas id="chart-hum"></canvas></div>
                 </div>
                 <div class="chart-card" data-chart-id="chart-baro">
-                    <div class="chart-title">Barometric Pressure</div>
+                    <div class="chart-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Barometric Pressure</div>
                     <div class="chart-wrap"><canvas id="chart-baro"></canvas></div>
                 </div>
                 <div class="chart-card" data-chart-id="chart-wind">
-                    <div class="chart-title">Wind Speed &amp; Gusts</div>
+                    <div class="chart-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Wind Speed &amp; Gusts</div>
                     <div class="chart-wrap"><canvas id="chart-wind"></canvas></div>
                 </div>
                 <div class="chart-card" data-chart-id="chart-rain">
-                    <div class="chart-title">Precipitation Rate</div>
+                    <div class="chart-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Precipitation Rate</div>
                     <div class="chart-wrap"><canvas id="chart-rain"></canvas></div>
                 </div>
                 <div class="chart-card" data-chart-id="chart-uv">
-                    <div class="chart-title">UV Index</div>
+                    <div class="chart-title"><span class="drag-handle" title="Drag to reorder">⠿</span> UV Index</div>
                     <div class="chart-wrap"><canvas id="chart-uv"></canvas></div>
                 </div>
                 <div class="chart-card" data-chart-id="chart-winddir">
-                    <div class="chart-title">Wind Direction</div>
+                    <div class="chart-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Wind Direction</div>
                     <div class="chart-wrap"><canvas id="chart-winddir"></canvas></div>
                 </div>
                 <div class="chart-card" data-chart-id="chart-solar">
-                    <div class="chart-title">Solar Radiation</div>
+                    <div class="chart-title"><span class="drag-handle" title="Drag to reorder">⠿</span> Solar Radiation</div>
                     <div class="chart-wrap"><canvas id="chart-solar"></canvas></div>
                 </div>
             </div>

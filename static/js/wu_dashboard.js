@@ -152,9 +152,11 @@ function loadSettings() {
         const tu = $("temp-unit");
         if (tu) tu.value = useCelsius ? "c" : "f";
     } catch (e) { }
+    loadCardOrder();
 }
 
 function saveSettings() {
+    const existing = JSON.parse(localStorage.getItem("wx_settings") || "{}");
     const hiddenCards = [];
     document.querySelectorAll("#card-toggles input").forEach(cb => {
         if (!cb.checked) hiddenCards.push(cb.dataset.card);
@@ -164,6 +166,7 @@ function saveSettings() {
         if (!cb.checked) hiddenCharts.push(cb.dataset.chart);
     });
     localStorage.setItem("wx_settings", JSON.stringify({
+        ...existing,  // preserve metricsOrder, chartsOrder, and other fields
         station: currentStation,
         hours: currentHours,
         refreshMs,
@@ -277,6 +280,15 @@ function initSettings() {
         saveSettings();
         fetchAll();
     });
+
+    // Reset card order
+    $("reset-layout")?.addEventListener("click", () => {
+        const s = JSON.parse(localStorage.getItem("wx_settings") || "{}");
+        delete s.metricsOrder;
+        delete s.chartsOrder;
+        localStorage.setItem("wx_settings", JSON.stringify(s));
+        location.reload();
+    });
 }
 
 // ── DOM updaters ──────────────────────────────────────────────────────────────
@@ -305,8 +317,14 @@ function updateHero(d) {
     if (dash) dash.style.display = "block";
 }
 
+function updatePeriodLabels() {
+    const label = timeframeLabel();
+    setText("metrics-range-label", label);
+}
+
 function updateSummary(histRows) {
     setText("summary-label", timeframeLabel());
+    updatePeriodLabels();
     if (!histRows || !histRows.length) return;
     setText("summary-high", tempStr(hMax(histRows, "temp_f")));
     setText("summary-low", tempStr(hMin(histRows, "temp_f")));
@@ -610,6 +628,92 @@ function updateSourceRow() {
     }
 }
 
+// ── Drag-and-Drop card reordering ─────────────────────────────────────────────
+let dragSrc = null;
+
+function initDragAndDrop() {
+    [".metrics-grid", ".charts-grid"].forEach(sel => {
+        const grid = document.querySelector(sel);
+        if (!grid) return;
+
+        grid.querySelectorAll("[data-card-id], [data-chart-id]").forEach(card => {
+            card.draggable = true;
+
+            card.addEventListener("dragstart", e => {
+                dragSrc = card;
+                e.dataTransfer.effectAllowed = "move";
+                // Defer class add so the "ghost" image captures the un-dimmed state
+                requestAnimationFrame(() => card.classList.add("dragging"));
+            });
+
+            card.addEventListener("dragend", () => {
+                card.classList.remove("dragging");
+                grid.querySelectorAll(".drag-over").forEach(c => c.classList.remove("drag-over"));
+                saveCardOrder();
+            });
+
+            card.addEventListener("dragover", e => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (card !== dragSrc) card.classList.add("drag-over");
+            });
+
+            card.addEventListener("dragleave", e => {
+                // Only remove highlight when leaving to an element outside this card
+                if (!card.contains(e.relatedTarget)) card.classList.remove("drag-over");
+            });
+
+            card.addEventListener("drop", e => {
+                e.preventDefault();
+                card.classList.remove("drag-over");
+                if (!dragSrc || dragSrc === card) return;
+                const cards = [...grid.children];
+                const srcIdx = cards.indexOf(dragSrc);
+                const dstIdx = cards.indexOf(card);
+                if (srcIdx < 0 || dstIdx < 0) return;
+                if (srcIdx < dstIdx) {
+                    grid.insertBefore(dragSrc, card.nextSibling);
+                } else {
+                    grid.insertBefore(dragSrc, card);
+                }
+            });
+        });
+    });
+}
+
+function saveCardOrder() {
+    const existing = JSON.parse(localStorage.getItem("wx_settings") || "{}");
+    const metricsGrid = document.querySelector(".metrics-grid");
+    if (metricsGrid) {
+        existing.metricsOrder = [...metricsGrid.querySelectorAll("[data-card-id]")]
+            .map(c => c.dataset.cardId);
+    }
+    const chartsGrid = document.querySelector(".charts-grid");
+    if (chartsGrid) {
+        existing.chartsOrder = [...chartsGrid.querySelectorAll("[data-chart-id]")]
+            .map(c => c.dataset.chartId);
+    }
+    localStorage.setItem("wx_settings", JSON.stringify(existing));
+}
+
+function loadCardOrder() {
+    const s = JSON.parse(localStorage.getItem("wx_settings") || "{}");
+    if (s.metricsOrder) {
+        const grid = document.querySelector(".metrics-grid");
+        if (grid) s.metricsOrder.forEach(id => {
+            const card = grid.querySelector(`[data-card-id="${id}"]`);
+            if (card) grid.appendChild(card);
+        });
+    }
+    if (s.chartsOrder) {
+        const grid = document.querySelector(".charts-grid");
+        if (grid) s.chartsOrder.forEach(id => {
+            const card = grid.querySelector(`[data-chart-id="${id}"]`);
+            if (card) grid.appendChild(card);
+        });
+    }
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 // The user menu is already wired by auth.js at parse time (server-rendered HTML).
 // We only need checkAuth() to get the user object for settings merging.
@@ -629,6 +733,7 @@ async function initApp() {
     }
 
     initSettings();
+    initDragAndDrop();
     initCwopInput();
     initStationTabs();
     fetchAll();

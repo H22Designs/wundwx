@@ -1515,6 +1515,67 @@ body {
     color: var(--text-muted);
 }
 
+/* ─── Metrics period bar ──────────────────────────────────────────────── */
+.metrics-period-bar {
+    font-size: .7rem;
+    color: var(--text-dim);
+    letter-spacing: .04em;
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .15rem 0;
+}
+
+.metrics-period-val {
+    background: rgba(249, 115, 22, .12);
+    border: 1px solid rgba(249, 115, 22, .3);
+    color: var(--accent);
+    font-size: .65rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    padding: .1rem .45rem;
+    border-radius: 4px;
+    transition: all .3s;
+}
+
+/* ─── Drag-and-Drop ───────────────────────────────────────────────────── */
+.drag-handle {
+    font-size: 1rem;
+    color: var(--text-dim);
+    cursor: grab;
+    opacity: 0;
+    transition: opacity .15s, color .15s;
+    user-select: none;
+    flex-shrink: 0;
+    margin-right: .35rem;
+    line-height: 1;
+}
+
+.metric-card:hover .drag-handle,
+.chart-card:hover .drag-handle {
+    opacity: 1;
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+.metric-card.dragging,
+.chart-card.dragging {
+    opacity: .35;
+    transform: scale(.97) !important;
+    border-color: var(--accent) !important;
+    box-shadow: none !important;
+}
+
+.metric-card.drag-over,
+.chart-card.drag-over {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-glow), 0 8px 25px rgba(0, 0, 0, .3) !important;
+    transform: translateY(-3px) !important;
+}
+
 /* ─── Responsive ──────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
     .hero-row {
